@@ -1,0 +1,50 @@
+# The governed MCP gateway. It is the only component holding storage and job-launch
+# rights, and harness pods can reach nothing else (see 60-netpol.yaml).
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: mcp-gateway, namespace: gateway }
+spec:
+  replicas: 1
+  strategy: { type: Recreate } # single writer for the SQLite run ledger
+  selector: { matchLabels: { app: mcp-gateway } }
+  template:
+    metadata: { labels: { app: mcp-gateway } }
+    spec:
+      serviceAccountName: mcp-gateway
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: gateway
+          image: platform:0.1
+          imagePullPolicy: Never
+          ports: [{ containerPort: 8080 }]
+          env:
+            - { name: AWS_ENDPOINT_URL, value: "http://moto.aws-sim.svc.cluster.local:5000" }
+            - { name: AWS_ACCESS_KEY_ID, value: testing }
+            - { name: AWS_SECRET_ACCESS_KEY, value: testing }
+            - { name: AWS_DEFAULT_REGION, value: us-east-1 }
+            - { name: JOBS_NAMESPACE, value: jobs }
+            - { name: RUNNER_IMAGE, value: "udf-runner:0.1" }
+            - { name: HOME, value: /tmp }
+            - { name: PYTHONUNBUFFERED, value: "1" }
+            - name: AGENT_TOKENS
+              valueFrom: { secretKeyRef: { name: gateway-tokens, key: tokens.json } }
+            - name: PLATFORM_TOKEN # the launcher's /internal calls
+              valueFrom: { secretKeyRef: { name: gateway-tokens, key: PLATFORM_TOKEN } }
+          volumeMounts:
+            - { name: runs, mountPath: /runs }
+            - { name: tmp, mountPath: /tmp }
+          readinessProbe: { httpGet: { path: /healthz, port: 8080 }, periodSeconds: 5 }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+      volumes:
+        - { name: runs, persistentVolumeClaim: { claimName: runs } }
+        - { name: tmp, emptyDir: {} }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: mcp-gateway, namespace: gateway }
+spec:
+  selector: { app: mcp-gateway }
+  ports: [{ port: 8080, targetPort: 8080 }]

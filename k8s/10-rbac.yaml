@@ -1,0 +1,73 @@
+# OpenClaw may start, attach to, and delete harness pods in `agents`, and nothing else.
+# It has no rights in `gateway`, `jobs`, or `aws-sim`, so it can't reach data or run jobs.
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: openclaw, namespace: openclaw }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: acp-launcher, namespace: agents }
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [create, get, list, watch, delete]
+  - apiGroups: [""]
+    resources: [pods/attach]
+    verbs: [create, get]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: acp-launcher, namespace: agents }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: acp-launcher }
+subjects: [{ kind: ServiceAccount, name: openclaw, namespace: openclaw }]
+---
+# The gateway may create and watch UDF Jobs in `jobs`, and nothing else in the cluster.
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: mcp-gateway, namespace: gateway }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: udf-launcher, namespace: jobs }
+rules:
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [create, get, list, watch, delete]
+  - apiGroups: [batch]
+    resources: [jobs/status]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: udf-launcher, namespace: jobs }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: udf-launcher }
+subjects: [{ kind: ServiceAccount, name: mcp-gateway, namespace: gateway }]
+---
+# The research launcher may start, watch, read logs of, and delete harness pods in
+# `agents`. Nothing else. (OpenClaw keeps its own grant only for its legacy ACP path.)
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: launcher, namespace: launcher }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: harness-launcher, namespace: agents }
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [create, get, list, watch, delete]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: harness-launcher, namespace: agents }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: harness-launcher }
+subjects: [{ kind: ServiceAccount, name: launcher, namespace: launcher }]

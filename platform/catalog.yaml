@@ -1,0 +1,39 @@
+# Lake stand-in: datasets, their sensitivity, and Lake Formation-style grants.
+# For each run the gateway materializes a *filtered snapshot*; the job never sees
+# the source table. Grants are admin-authored and never built from agent input.
+datasets:
+  claims_synthetic:
+    description: Synthetic member-level claims, one row per member-year.
+    sensitivity: internal
+    problems: [claims_cost_drivers]
+    grants: # per team: column allowlist + row filter
+      research:
+        columns: [age_band, region, plan, chronic_conditions, claim_cost]
+        row_filter: "region <> 'EU'" # e.g. a data-residency rule
+
+  members_pii:
+    description: Member names and (fake) SSNs. Exists to show that the forbid policy wins.
+    sensitivity: pii
+    problems: [claims_cost_drivers] # deliberately "misconfigured" to include PII
+    grants:
+      research:
+        columns: [member_id, member_name, ssn]
+        row_filter: "true"
+
+# People, as front doors identify them (the signed-in user's email or name). The
+# launcher's Cedar policies decide per person; `"*"` covers anyone not listed.
+# In AWS this would come from your IdP groups instead of this file.
+people:
+  "*":
+    team: research
+    roles: [researcher]
+  approver@example.com:
+    team: research
+    roles: [researcher, approver]
+
+# Principals the gateway recognizes. Their bearer tokens live in a Kubernetes
+# Secret (see Makefile `secrets`), never in this file.
+agents:
+  research-bot:
+    team: research
+    clearances: [public, internal]

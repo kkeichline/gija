@@ -1,0 +1,53 @@
+# Temporal dev server: one binary with SQLite and the Web UI (`make temporal` for the UI).
+# Durable enough for a laptop demo; in AWS this is Temporal Cloud or Step Functions.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: temporal-data, namespace: temporal }
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 2Gi } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: temporal, namespace: temporal }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: temporal } }
+  template:
+    metadata: { labels: { app: temporal } }
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: temporal
+          image: temporalio/temporal:1.9.1
+          args: [server, start-dev, --ip, 0.0.0.0, --db-filename, /data/temporal.db, --log-level, warn]
+          ports:
+            - { name: grpc, containerPort: 7233 }
+            - { name: ui, containerPort: 8233 }
+          readinessProbe: { tcpSocket: { port: 7233 }, periodSeconds: 5 }
+          volumeMounts: [{ name: data, mountPath: /data }]
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 1Gi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+      volumes:
+        - { name: data, persistentVolumeClaim: { claimName: temporal-data } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: temporal, namespace: temporal }
+spec:
+  selector: { app: temporal }
+  ports:
+    - { name: grpc, port: 7233, targetPort: 7233 }
+    - { name: ui, port: 8233, targetPort: 8233 }

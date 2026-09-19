@@ -1,0 +1,26 @@
+{
+  "apiVersion": "v1",
+  "spec": {
+    "automountServiceAccountToken": false,
+    "securityContext": {
+      "runAsNonRoot": true,
+      "runAsUser": 10001,
+      "seccompProfile": { "type": "RuntimeDefault" }
+    },
+    "containers": [
+      {
+        "name": "smoke",
+        "image": "platform:0.1",
+        "command": ["python", "-m", "workers.smoke"],
+        "stdin": true,
+        "stdinOnce": true,
+        "env": [{ "name": "PYTHONUNBUFFERED", "value": "1" }],
+        "envFrom": [{ "secretRef": { "name": "harness-claude" } }],
+        "securityContext": {
+          "allowPrivilegeEscalation": false,
+          "capabilities": { "drop": ["ALL"] }
+        }
+      }
+    ]
+  }
+}

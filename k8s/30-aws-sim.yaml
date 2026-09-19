@@ -1,0 +1,54 @@
+# moto stands in for S3 (UDF staging, released artifacts), SNS, and SQS. Platform code
+# uses plain boto3 with AWS_ENDPOINT_URL, so pointing it at real AWS is a config change.
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: moto, namespace: aws-sim }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: moto } }
+  template:
+    metadata: { labels: { app: moto } }
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false # else the "moto" Service injects MOTO_PORT=tcp://..., which moto reads as its port
+      containers:
+        - name: moto
+          image: motoserver/moto:5.2.3
+          ports: [{ containerPort: 5000 }]
+          readinessProbe: { tcpSocket: { port: 5000 }, periodSeconds: 3 }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: moto, namespace: aws-sim }
+spec:
+  selector: { app: moto }
+  ports: [{ port: 5000, targetPort: 5000 }]
+---
+# The "Lambda" that promotes UDFs from staging once they've produced a released artifact.
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: udf-mover, namespace: aws-sim }
+spec:
+  replicas: 1
+  strategy: { type: Recreate } # never an old mover (older rules) running alongside a new one
+  selector: { matchLabels: { app: udf-mover } }
+  template:
+    metadata: { labels: { app: udf-mover } }
+    spec:
+      automountServiceAccountToken: false
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: mover
+          image: platform:0.1
+          imagePullPolicy: Never
+          command: [python, -m, workers.mover]
+          env:
+            - { name: AWS_ENDPOINT_URL, value: "http://moto.aws-sim.svc.cluster.local:5000" }
+            - { name: AWS_ACCESS_KEY_ID, value: testing }
+            - { name: AWS_SECRET_ACCESS_KEY, value: testing }
+            - { name: AWS_DEFAULT_REGION, value: us-east-1 }
+            - { name: PYTHONUNBUFFERED, value: "1" }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
