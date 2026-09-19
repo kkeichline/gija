@@ -103,6 +103,26 @@ def acp_tasks() -> pd.DataFrame:
     return df
 
 
+@st.cache_data(ttl=6)
+def research_runs() -> pd.DataFrame:
+    """Temporal workflows: one row per research run, with its stage and whether it's moving."""
+    raw = kubectl("exec", "-n", "temporal", "deploy/temporal", "--", "temporal", "--address",
+                  "127.0.0.1:7233", "workflow", "list", "--limit", "20", "--output", "json", timeout=30)
+    items = json.loads(raw[raw.find("["):] if raw.lstrip().startswith("[") else raw[raw.find("{"):])
+    items = items.get("executions", items) if isinstance(items, dict) else items
+    now = dt.datetime.now(dt.timezone.utc)
+    rows = []
+    for w in items:
+        info = w.get("execution", w)
+        started = dt.datetime.fromisoformat(str(w.get("startTime", "")).replace("Z", "+00:00"))
+        status = str(w.get("status", "")).replace("WORKFLOW_EXECUTION_STATUS_", "").title()
+        rows.append({"research": info.get("workflowId", ""),
+                     "state": {"Running": "⏳ running", "Completed": "🟢 done"}.get(status, f"🔴 {status}"),
+                     "started": started.astimezone().strftime("%H:%M:%S"),
+                     "elapsed": f"{int((now - started).total_seconds() // 60)} min"})
+    return pd.DataFrame(rows)
+
+
 @st.cache_data(ttl=10)
 def active_model() -> str:
     return kubectl("get", "configmap", "openclaw-model", "-n", "openclaw",
@@ -224,6 +244,14 @@ def live() -> None:
             utc = dt.datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S").replace(tzinfo=dt.timezone.utc)
             st.text(f"{utc.astimezone():%H:%M:%S}  {m.group(2)}")  # the pod logs in UTC
     with bottom[2]:
+        st.subheader("Research runs")
+        st.caption("Temporal workflows: ask → sessions → review → approval. `make temporal` for full history.")
+        try:
+            research = research_runs()
+            st.dataframe(research, hide_index=True, use_container_width=True, height=180) if not research.empty \
+                else st.caption("No research runs yet.")
+        except Exception as exc:
+            st.caption(f"Couldn't read Temporal ({str(exc)[:120]}).")
         st.subheader("OpenClaw ACP tasks")
         try:
             tasks = acp_tasks()

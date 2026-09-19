@@ -1,0 +1,95 @@
+# LibreChat front door (make librechat → http://127.0.0.1:3080) plus its MongoDB.
+# LibreChat holds only a front-door token for the research launcher; no cluster rights,
+# no gateway token, no data access.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: mongo-data, namespace: librechat }
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 2Gi } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: mongo, namespace: librechat }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: mongo } }
+  template:
+    metadata: { labels: { app: mongo } }
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext: { runAsNonRoot: true, runAsUser: 999, runAsGroup: 999, fsGroup: 999, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: mongo
+          # MongoDB 8.x refuses to start on Linux kernels 6.19-7.0.13 (SERVER-121912), which
+          # includes Docker Desktop's current VM kernel. 7.0 is unaffected; move to 8.x once
+          # `docker run --rm alpine uname -r` reports 7.0.14 or later.
+          image: mongo:7.0.43
+          args: [--bind_ip_all, --noauth]  # reachable only from LibreChat (network policy)
+          ports: [{ containerPort: 27017 }]
+          readinessProbe: { tcpSocket: { port: 27017 }, periodSeconds: 5 }
+          volumeMounts: [{ name: data, mountPath: /data/db }]
+          resources: { requests: { cpu: 100m, memory: 256Mi }, limits: { memory: 1Gi } }
+          securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: [ALL] } }
+      volumes: [{ name: data, persistentVolumeClaim: { claimName: mongo-data } }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: mongo, namespace: librechat }
+spec:
+  selector: { app: mongo }
+  ports: [{ port: 27017, targetPort: 27017 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: librechat, namespace: librechat }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: librechat } }
+  template:
+    metadata: { labels: { app: librechat } }
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext: { runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: librechat
+          image: ghcr.io/danny-avila/librechat:v0.8.7
+          ports: [{ containerPort: 3080 }]
+          envFrom: [{ secretRef: { name: librechat-secrets } }]
+          env:
+            - { name: HOST, value: 0.0.0.0 }
+            - { name: PORT, value: "3080" }
+            - { name: MONGO_URI, value: "mongodb://mongo.librechat.svc.cluster.local:27017/LibreChat" }
+            - { name: DOMAIN_CLIENT, value: "http://127.0.0.1:3080" }
+            - { name: DOMAIN_SERVER, value: "http://127.0.0.1:3080" }
+            - { name: ALLOW_REGISTRATION, value: "true" }  # local demo: anyone at the laptop can make a user
+            - { name: ALLOW_EMAIL_LOGIN, value: "true" }
+            - { name: ALLOW_SOCIAL_LOGIN, value: "false" }
+            - { name: SEARCH, value: "false" }  # no Meilisearch; keeps the footprint small
+            - { name: ENDPOINTS, value: "custom,anthropic,agents" }
+            - { name: ANTHROPIC_MODELS, value: "claude-sonnet-5" }
+            - { name: NO_INDEX, value: "true" }
+          volumeMounts:
+            - { name: config, mountPath: /app/librechat.yaml, subPath: librechat.yaml }
+            - { name: images, mountPath: /app/client/public/images }
+            - { name: uploads, mountPath: /app/uploads }
+            - { name: logs, mountPath: /app/logs }
+          readinessProbe: { httpGet: { path: /health, port: 3080 }, periodSeconds: 5, failureThreshold: 60 }
+          resources: { requests: { cpu: 250m, memory: 512Mi }, limits: { memory: 2Gi } }
+          securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: [ALL] } }
+      volumes:
+        - { name: config, configMap: { name: librechat-config } }
+        - { name: images, emptyDir: {} }
+        - { name: uploads, emptyDir: {} }
+        - { name: logs, emptyDir: {} }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: librechat, namespace: librechat }
+spec:
+  selector: { app: librechat }
+  ports: [{ port: 3080, targetPort: 3080 }]

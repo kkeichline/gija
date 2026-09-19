@@ -17,8 +17,8 @@ when runs finish. It is deliberately **outside the trust boundary**: the governe
 gateway, Kubernetes RBAC, and Cilium network policy do the enforcing, so OpenClaw's
 own security record matters much less.
 
-Next to it runs an **orchestrator-neutral research path**: any front door (a CLI today;
-LibreChat, Open WebUI, or ZeroClaw next) calls four MCP tools on a **research launcher**.
+Next to it runs an **orchestrator-neutral research path**: any front door (the CLI and
+LibreChat today; Open WebUI and ZeroClaw next) calls four MCP tools on a **research launcher**.
 A **Temporal** workflow owns the loop: it runs Claude Code sessions, retries with
 feedback, has a **second agent review** each released result, and promotes the UDF
 automatically when everything is clean (`auto_if_clean`), asking a person only when
@@ -212,6 +212,31 @@ For the raw feeds: `make audit` (gateway decisions), `make pods` (pods coming an
    deliberately grants the team that dataset. Ask it to "keep refining" and the sixth
    run is denied by the budget.
 5. `make smoke` shows the same guardrails deterministically, without a model.
+
+### LibreChat: the chat front door
+
+```bash
+make librechat     # http://127.0.0.1:3080
+```
+
+Sign up with any email (the account lives only in this cluster's MongoDB), pick
+**Claims Research Assistant**, and ask a question. The assistant uses gija's four
+tools and nothing else, and LibreChat sends your email as `X-User`, so the launcher's
+Cedar decides per person. Sign up a second account as `approver@example.com` (in a
+private window) to see and decide the research that gets flagged.
+
+How it's configured ([librechat.yaml](frontdoors/librechat/librechat.yaml)):
+- `modelSpecs` with `enforce: true`: people see two curated assistants (local model and
+  Claude), not a wall of models and parameters. Anyone can still build their own
+  assistant on top of gija in the no-code **Agent Builder**.
+- `mcpSettings.allowedDomains` is a strict allowlist: LibreChat's MCP client can reach
+  the launcher and nothing else. Its network policy also allows only MongoDB, the
+  launcher, and the model.
+- LibreChat holds only a front-door token. It has no cluster rights, no gateway token,
+  and no data access.
+- MongoDB is pinned to 7.0: MongoDB 8.x refuses to start on Linux kernels 6.19–7.0.13
+  ([SERVER-121912](https://jira.mongodb.org/browse/SERVER-121912)), which includes
+  Docker Desktop's current VM kernel.
 
 ## Unattended research: loop limits, approval modes, and the reviewer
 

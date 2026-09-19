@@ -92,16 +92,23 @@ async def main() -> None:
         elif a.command == "decide":
             show(await call(url, a.user, "decide", research_id=a.id, decision=a.decision))
         elif a.command == "watch":
-            last = ""
             while True:
                 data = await call(url, a.user, "research_status", research_id=a.id)
-                if data["status"] != last:
-                    print(time.strftime("%H:%M:%S"), data["status"], flush=True)
-                    last = data["status"]
+                p = data.get("progress", {})
+                line = [data["status"]]
+                if p:
+                    line += [f"{p.get('elapsed', '?')} elapsed", f"{p.get('tool_calls', 0)} tool calls"]
+                    if p.get("last_step"):
+                        line.append(f"last: {p['last_step']} ({p['last_step_ago']} ago)")
+                    if p.get("looks_stalled"):
+                        line.append("LOOKS STALLED")
+                    if p.get("detail"):
+                        line.append(p["detail"])
+                print(time.strftime("%H:%M:%S"), " · ".join(line), flush=True)
                 if not data["status"].startswith(("researching", "starting", "reviewing")):
                     show(data)
                     return
-                await asyncio.sleep(10)
+                await asyncio.sleep(15)
 
 
 if __name__ == "__main__":

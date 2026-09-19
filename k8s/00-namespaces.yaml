@@ -42,3 +42,9 @@ kind: Namespace
 metadata:
   name: launcher # research launcher: the front doors' only API, and the only thing that starts harness pods
   labels: { pod-security.kubernetes.io/enforce: restricted }
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: librechat # front door: LibreChat + its MongoDB
+  labels: { pod-security.kubernetes.io/enforce: restricted }

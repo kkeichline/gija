@@ -55,10 +55,12 @@ class ResearchState:
 
 
 def task_prompt(req: ResearchRequest, feedback: str) -> str:
-    prompt = (f"Work the {req.problem} problem using only the governed MCP tools "
-              f"(list_problems, submit_udf, run_udf, get_run).\n\nQuestion from {req.requested_by}: {req.question}\n\n"
-              "Read the artifact contract first. Stop after one released run and answer the question, "
-              "citing the run_id.")
+    prompt = (f"Work the {req.problem} problem using only the governed MCP tools.\n\n"
+              f"Question from {req.requested_by}: {req.question}\n\n"
+              "Start with list_problems and read its artifact contract, its how_your_output_is_checked "
+              "rules, and its udf_template. Then submit_udf, validate_udf (free; it does not spend your "
+              "run budget), fix anything it reports, and only then run_udf. Stop after one released run "
+              "and answer the question, citing the run_id.")
     if feedback:
         prompt += f"\n\nA previous attempt did not produce a released result: {feedback}"
     return prompt
@@ -95,11 +97,12 @@ class ResearchRun:
                 s.note = f"stopped after {req.max_hours}h"
                 break
             s.status = f"researching (session {attempt} of {req.max_sessions})"
+            name = f"research-{workflow.uuid4().hex[:8]}"
+            s.sessions.append(name)  # recorded before the pod starts, so progress is visible at once
             session: SessionResult = await workflow.execute_activity(
-                run_harness_session, task_prompt(req, feedback),
+                run_harness_session, args=[task_prompt(req, feedback), name],
                 start_to_close_timeout=timedelta(minutes=35), heartbeat_timeout=timedelta(minutes=2),
                 retry_policy=RetryPolicy(maximum_attempts=2))
-            s.sessions.append(session.session)
             s.answers.append(session.answer or session.error)
             runs: list[Run] = await workflow.execute_activity(
                 fetch_runs, session.session, start_to_close_timeout=timedelta(minutes=2))
