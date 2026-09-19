@@ -1,0 +1,26 @@
+{
+  "apiVersion": "v1",
+  "spec": {
+    "automountServiceAccountToken": false,
+    "securityContext": {
+      "runAsNonRoot": true,
+      "runAsUser": 10001,
+      "seccompProfile": { "type": "RuntimeDefault" }
+    },
+    "containers": [
+      {
+        "name": "drop-demo",
+        "image": "busybox:1.37",
+        "command": [
+          "sh",
+          "-c",
+          "sleep 3; echo 'DNS lookup of example.com:'; nslookup -timeout=3 example.com 2>&1 | tail -2; echo 'Connect to 1.1.1.1:'; wget -q -T 4 -O /dev/null http://1.1.1.1 && echo CONNECTED || echo BLOCKED"
+        ],
+        "securityContext": {
+          "allowPrivilegeEscalation": false,
+          "capabilities": { "drop": ["ALL"] }
+        }
+      }
+    ]
+  }
+}

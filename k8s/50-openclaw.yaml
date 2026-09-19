@@ -1,0 +1,100 @@
+# OpenClaw: the coordination layer. Loopback-only (reach it with `make ui`), token auth,
+# no host exec, and RBAC that only lets it start harness pods in `agents`.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: openclaw-state, namespace: openclaw }
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 5Gi } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: openclaw, namespace: openclaw }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: openclaw } }
+  template:
+    metadata: { labels: { app: openclaw } }
+    spec:
+      serviceAccountName: openclaw
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      initContainers:
+        # First boot: lay down the pre-installed plugin in a private (0700) state dir; the
+        # volume root itself is root-owned and world-writable. Every boot: the ConfigMap
+        # wins, so the repo's openclaw.json is the source of truth for this prototype.
+        - name: seed
+          image: openclaw-k8s:0.1
+          imagePullPolicy: Never
+          command:
+            - sh
+            - -c
+            - >-
+              mkdir -p /data/openclaw && chmod 700 /data/openclaw &&
+              cp -rn /opt/openclaw-seed/. /data/openclaw/ &&
+              cp /config/openclaw.json /data/openclaw/openclaw.json &&
+              chmod 600 /data/openclaw/openclaw.json
+          volumeMounts:
+            - { name: state, mountPath: /data }
+            - { name: config, mountPath: /config }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+      containers:
+        - name: gateway
+          image: openclaw-k8s:0.1
+          imagePullPolicy: Never
+          envFrom:
+            - secretRef: { name: openclaw-secrets }
+            - configMapRef: { name: openclaw-model } # OPENCLAW_MODEL; see scripts/model.sh
+          env:
+            - { name: HOME, value: /home/node }
+          volumeMounts:
+            - { name: home, mountPath: /home/node }
+            - { name: state, mountPath: /home/node/.openclaw, subPath: openclaw }
+            - { name: workspace, mountPath: /workspace }
+            - { name: acp-shim, mountPath: /etc/acp-shim }
+            - { name: tmp, mountPath: /tmp }
+          # The gateway binds loopback, so probes run inside the pod.
+          startupProbe:
+            exec: { command: [curl, -fsS, -o, /dev/null, "http://127.0.0.1:18789/readyz"] }
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            exec: { command: [curl, -fsS, -o, /dev/null, "http://127.0.0.1:18789/readyz"] }
+            periodSeconds: 10
+          livenessProbe:
+            exec: { command: [curl, -fsS, -o, /dev/null, "http://127.0.0.1:18789/healthz"] }
+            periodSeconds: 30
+          resources:
+            requests: { cpu: 250m, memory: 1Gi }
+            limits: { memory: 3Gi }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+        # SNS -> SQS -> /hooks/wake on loopback: tells the human a run finished.
+        - name: notifier
+          image: platform:0.1
+          imagePullPolicy: Never
+          command: [python, -m, workers.notifier]
+          env:
+            - { name: AWS_ENDPOINT_URL, value: "http://moto.aws-sim.svc.cluster.local:5000" }
+            - { name: AWS_ACCESS_KEY_ID, value: testing }
+            - { name: AWS_SECRET_ACCESS_KEY, value: testing }
+            - { name: AWS_DEFAULT_REGION, value: us-east-1 }
+            - { name: PYTHONUNBUFFERED, value: "1" }
+            - name: OPENCLAW_HOOKS_TOKEN
+              valueFrom: { secretKeyRef: { name: openclaw-secrets, key: OPENCLAW_HOOKS_TOKEN } }
+          securityContext:
+            runAsUser: 10001
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+      volumes:
+        - { name: state, persistentVolumeClaim: { claimName: openclaw-state } }
+        - { name: config, configMap: { name: openclaw-config } }
+        - { name: acp-shim, configMap: { name: acp-shim } }
+        - { name: home, emptyDir: {} }
+        - { name: workspace, emptyDir: {} }
+        - { name: tmp, emptyDir: {} }

@@ -1,0 +1,43 @@
+# Shared run directory: the stand-in for SageMaker Processing's S3 input/output channels.
+# The gateway (trusted) writes each run's snapshot and UDF; the job (untrusted) mounts
+# only its own run's subdirectories. PVCs are namespaced, so two PVs point at the same
+# directory on the single kind node (`make cluster` creates it, owned by uid 10001).
+apiVersion: v1
+kind: PersistentVolume
+metadata: { name: runs-gateway }
+spec:
+  capacity: { storage: 5Gi }
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  hostPath: { path: /var/local/runs, type: Directory }
+  claimRef: { namespace: gateway, name: runs }
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata: { name: runs-jobs }
+spec:
+  capacity: { storage: 5Gi }
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  hostPath: { path: /var/local/runs, type: Directory }
+  claimRef: { namespace: jobs, name: runs }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: runs, namespace: gateway }
+spec:
+  storageClassName: ""
+  volumeName: runs-gateway
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 5Gi } }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: runs, namespace: jobs }
+spec:
+  storageClassName: ""
+  volumeName: runs-jobs
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 5Gi } }

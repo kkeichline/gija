@@ -1,0 +1,164 @@
+# Default-deny in every zone (standard NetworkPolicy), then narrow allows (Cilium, which
+# adds FQDN rules). Cilium unions the allows, so anything not listed here is dropped.
+#
+# Known gap: FQDN rules need Cilium's DNS proxy to see lookups, so DNS is allowed for
+# any name. A pod could leak data through DNS queries. In AWS, pair this with Route 53
+# Resolver DNS Firewall (or an egress proxy) on the VPC.
+
+# --- default deny ------------------------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: default-deny, namespace: openclaw }
+spec: { podSelector: {}, policyTypes: [Ingress, Egress] }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: default-deny, namespace: agents }
+spec: { podSelector: {}, policyTypes: [Ingress, Egress] }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: default-deny, namespace: gateway }
+spec: { podSelector: {}, policyTypes: [Ingress, Egress] }
+---
+# UDF jobs get nothing: no DNS, no gateway, no internet. The SageMaker network-isolation analog.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: default-deny, namespace: jobs }
+spec: { podSelector: {}, policyTypes: [Ingress, Egress] }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: default-deny, namespace: aws-sim }
+spec: { podSelector: {}, policyTypes: [Ingress, Egress] }
+---
+# --- agents: the model API and the governed gateway. Nothing else. --------------------
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata: { name: harness-egress, namespace: agents }
+spec:
+  endpointSelector: { matchLabels: { app: acp-harness } }
+  egress:
+    - toEndpoints: [{ matchLabels: { "k8s:io.kubernetes.pod.namespace": kube-system, "k8s:k8s-app": kube-dns } }]
+      toPorts: [{ ports: [{ port: "53", protocol: ANY }], rules: { dns: [{ matchPattern: "*" }] } }]
+    - toFQDNs: [{ matchName: api.anthropic.com }]
+      toPorts: [{ ports: [{ port: "443", protocol: TCP }] }]
+    - toEndpoints: [{ matchLabels: { "k8s:io.kubernetes.pod.namespace": gateway, app: mcp-gateway } }]
+      toPorts: [{ ports: [{ port: "8080", protocol: TCP }] }]
+    # Local model (Ollama on the Mac) via Docker Desktop's host gateway, host.docker.internal.
+    - toCIDR: [192.168.65.254/32]
+      toPorts: [{ ports: [{ port: "11434", protocol: TCP }] }]
+---
+# --- gateway: harness pods in; Kubernetes API (to launch jobs) and moto out. ------------
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata: { name: mcp-gateway, namespace: gateway }
+spec:
+  endpointSelector: { matchLabels: { app: mcp-gateway } }
+  ingress:
+    - fromEndpoints:
+        - { matchLabels: { "k8s:io.kubernetes.pod.namespace": agents, app: acp-harness } }
+        - { matchLabels: { "k8s:io.kubernetes.pod.namespace": launcher, app: launcher } } # /internal only (token-checked)
+      toPorts: [{ ports: [{ port: "8080", protocol: TCP }] }]
+  egress:
+    - toEndpoints: [{ matchLabels: { "k8s:io.kubernetes.pod.namespace": kube-system, "k8s:k8s-app": kube-dns } }]
+      toPorts: [{ ports: [{ port: "53", protocol: ANY }] }]
+    - toEntities: [kube-apiserver]
+    - toEndpoints: [{ matchLabels: { "k8s:io.kubernetes.pod.namespace": aws-sim, app: moto } }]
+      toPorts: [{ ports: [{ port: "5000", protocol: TCP }] }]
+---
+# --- aws-sim: only the gateway, the notifier sidecar, and the mover may talk to moto. ----
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata: { name: moto, namespace: aws-sim }
+spec:
+  endpointSelector: { matchLabels: { app: moto } }
+  ingress:
+    - fromEndpoints:
+        - { matchLabels: { "k8s:io.kubernetes.pod.namespace": gateway, app: mcp-gateway } }
+        - { matchLabels: { "k8s:io.kubernetes.pod.namespace": openclaw, app: openclaw } }
+        - { matchLabels: { "k8s:io.kubernetes.pod.namespace": aws-sim, app: udf-mover } }
+      toPorts: [{ ports: [{ port: "5000", protocol: TCP }] }]
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata: { name: udf-mover, namespace: aws-sim }
+spec:
+  endpointSelector: { matchLabels: { app: udf-mover } }
+  egress:
+    - toEndpoints: [{ matchLabels: { "k8s:io.kubernetes.pod.namespace": kube-system, "k8s:k8s-app": kube-dns } }]
+      toPorts: [{ ports: [{ port: "53", protocol: ANY }] }]
+    - toEndpoints: [{ matchLabels: { app: moto } }]
+      toPorts: [{ ports: [{ port: "5000", protocol: TCP }] }]
+---
+# --- openclaw: model API, Kubernetes API (to start harness pods), moto (notifier). -------
+# No ingress: the Control UI is reached through `kubectl port-forward` to loopback.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata: { name: openclaw, namespace: openclaw }
+spec:
+  endpointSelector: { matchLabels: { app: openclaw } }
+  egress:
+    - toEndpoints: [{ matchLabels: { "k8s:io.kubernetes.pod.namespace": kube-system, "k8s:k8s-app": kube-dns } }]
+      toPorts: [{ ports: [{ port: "53", protocol: ANY }], rules: { dns: [{ matchPattern: "*" }] } }]
+    - toFQDNs: [{ matchName: api.anthropic.com }]
+      toPorts: [{ ports: [{ port: "443", protocol: TCP }] }]
+    - toEntities: [kube-apiserver]
+    - toEndpoints: [{ matchLabels: { "k8s:io.kubernetes.pod.namespace": aws-sim, app: moto } }]
+      toPorts: [{ ports: [{ port: "5000", protocol: TCP }] }]
+    - toCIDR: [192.168.65.254/32] # local model (Ollama on the Mac)
+      toPorts: [{ ports: [{ port: "11434", protocol: TCP }] }]
+---
+# --- launcher: front doors in; Kubernetes API (harness pods), Temporal, gateway /internal out.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: default-deny, namespace: launcher }
+spec: { podSelector: {}, policyTypes: [Ingress, Egress] }
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata: { name: launcher, namespace: launcher }
+spec:
+  endpointSelector: { matchLabels: { app: launcher } }
+  ingress:
+    # Front doors. Each one added later gets its namespace listed here.
+    - fromEndpoints:
+        - { matchLabels: { "k8s:io.kubernetes.pod.namespace": openclaw, app: openclaw } }
+      toPorts: [{ ports: [{ port: "8080", protocol: TCP }] }]
+  egress:
+    - toEndpoints: [{ matchLabels: { "k8s:io.kubernetes.pod.namespace": kube-system, "k8s:k8s-app": kube-dns } }]
+      toPorts: [{ ports: [{ port: "53", protocol: ANY }] }]
+    - toEntities: [kube-apiserver]
+    - toEndpoints: [{ matchLabels: { "k8s:io.kubernetes.pod.namespace": temporal, app: temporal } }]
+      toPorts: [{ ports: [{ port: "7233", protocol: TCP }] }]
+    - toEndpoints: [{ matchLabels: { "k8s:io.kubernetes.pod.namespace": gateway, app: mcp-gateway } }]
+      toPorts: [{ ports: [{ port: "8080", protocol: TCP }] }]
+---
+# --- temporal: only the launcher talks to it (the UI is reached by port-forward).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: default-deny, namespace: temporal }
+spec: { podSelector: {}, policyTypes: [Ingress, Egress] }
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata: { name: temporal, namespace: temporal }
+spec:
+  endpointSelector: { matchLabels: { app: temporal } }
+  ingress:
+    - fromEndpoints: [{ matchLabels: { "k8s:io.kubernetes.pod.namespace": launcher, app: launcher } }]
+      toPorts: [{ ports: [{ port: "7233", protocol: TCP }] }]
+---
+# --- reviewer pods: the model and nothing else (no gateway, no data, no tools).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata: { name: reviewer-egress, namespace: agents }
+spec:
+  endpointSelector: { matchLabels: { app: reviewer } }
+  egress:
+    - toEndpoints: [{ matchLabels: { "k8s:io.kubernetes.pod.namespace": kube-system, "k8s:k8s-app": kube-dns } }]
+      toPorts: [{ ports: [{ port: "53", protocol: ANY }], rules: { dns: [{ matchPattern: "*" }] } }]
+    - toFQDNs: [{ matchName: api.anthropic.com }]
+      toPorts: [{ ports: [{ port: "443", protocol: TCP }] }]
+    - toCIDR: [192.168.65.254/32] # local model (Ollama on the Mac)
+      toPorts: [{ ports: [{ port: "11434", protocol: TCP }] }]

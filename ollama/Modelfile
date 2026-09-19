@@ -1,0 +1,4 @@
+# Local stand-in for Claude (`make ollama` builds it as qwen3-coder-64k).
+# Claude Code's system prompt alone is large, so the default context is too small.
+FROM qwen3-coder:30b
+PARAMETER num_ctx 65536

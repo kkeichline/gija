@@ -1,0 +1,107 @@
+// OpenClaw gateway config for the prototype. OpenClaw is the coordination layer:
+// it takes requests, routes them to a harness over ACP, and tells humans when runs
+// finish. It is deliberately NOT in the trust boundary; the governed MCP gateway,
+// RBAC, and NetworkPolicy do the enforcing.
+{
+  gateway: {
+    mode: "local",
+    bind: "loopback", // reach it with `make ui` (kubectl port-forward), never a Service
+    port: 18789,
+    auth: { mode: "token", token: "${OPENCLAW_GATEWAY_TOKEN}" },
+  },
+
+  agents: {
+    ownership: "explicit", // required by 2.x for a roster with more than one agent
+    defaults: {
+      // Set by `make model-claude` / `make model-local` (the openclaw-model ConfigMap).
+      model: { primary: "${OPENCLAW_MODEL}" },
+    },
+    entries: {
+      // The operator's assistant. It can't run host commands; research goes to the pod.
+      main: { name: "Coordinator" },
+      // ACP defaults for the `claude` harness, used by `/acp spawn claude` and by the
+      // Coordinator's sessions_spawn({ runtime: "acp", agentId: "claude" }). Named after the
+      // harness id so those paths pick up cwd=/workspace, which exists in the harness image.
+      claude: {
+        name: "Researcher (Claude Code pod)",
+        // ACP spawns inherit the target agent's workspace as the harness cwd, and the
+        // harness validates that path inside its own pod. /workspace exists on both sides.
+        workspace: "/workspace",
+        runtime: { type: "acp", acp: { agent: "claude", mode: "persistent", cwd: "/workspace" } },
+      },
+    },
+  },
+
+  // Least privilege for OpenClaw's own agents; the research happens in the harness pod.
+  // (`openclaw security audit` flagged these defaults.)
+  // Local stand-in for Claude, used after `make model-local`: Ollama on the Mac,
+  // reached through Docker Desktop's host.docker.internal.
+  models: {
+    providers: {
+      ollama: {
+        apiKey: "ollama-local",
+        baseUrl: "http://host.docker.internal:11434", // native API; /v1 breaks tool calling
+        api: "ollama",
+        timeoutSeconds: 300, // a cold local model is slow to load
+        models: [
+          { id: "qwen3-coder-64k", name: "qwen3-coder-64k", contextWindow: 65536, params: { keep_alive: "30m" } },
+        ],
+      },
+    },
+  },
+
+  tools: {
+    exec: { mode: "deny" },
+    elevated: { enabled: false },
+    sessions: { visibility: "tree" }, // an agent sees only the sessions it spawned
+  },
+  browser: { enabled: false },
+
+  // The daily update check calls telemetry.openclaw.ai (Cilium blocks it anyway).
+  update: { checkOnStart: false },
+  telemetry: { enabled: false },
+
+  acp: {
+    enabled: true,
+    backend: "acpx",
+    defaultAgent: "claude",
+    allowedAgents: ["claude"],
+    stream: { deliveryMode: "live" },
+  },
+
+  plugins: {
+    // 2.x loads these by default; none are needed to coordinate harness pods.
+    deny: ["browser", "cua-computer", "file-transfer", "geolocation", "talk-voice"],
+    entries: {
+      acpx: {
+        enabled: true,
+        config: {
+          // The harness can act freely *inside its pod*; the pod is the sandbox.
+          // Default cwd for ACP sessions. It must exist inside the harness pod, not just here.
+          cwd: "/workspace",
+          permissionMode: "approve-all",
+          nonInteractivePermissions: "deny",
+          probeAgent: "claude",
+          timeoutSeconds: 180,
+          // Keep OpenClaw's own tools out of the harness's reach.
+          pluginToolsMcpBridge: false,
+          openClawToolsMcpBridge: false,
+          agents: {
+            // Instead of a local `npx` adapter, start a sandboxed pod and speak ACP over its stdio.
+            claude: { command: "/usr/local/bin/k8s-acp-shim", args: ["claude"] },
+          },
+        },
+      },
+    },
+  },
+
+  // Inbound hook for the notifier sidecar (the EventBridge -> SNS stand-in).
+  hooks: {
+    enabled: true,
+    token: "${OPENCLAW_HOOKS_TOKEN}",
+    path: "/hooks",
+    defaultSessionKey: "hook:ingress",
+    allowedAgentIds: ["main"],
+    allowRequestSessionKey: false,
+  },
+}

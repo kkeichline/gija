@@ -1,0 +1,33 @@
+# Per-problem artifact contract. The agent sees this via list_problems; the release
+# rule enforces it on job output before anything returns to the agent.
+problem: claims_cost_drivers
+question: >
+  Which member segments (age band x plan x number of chronic conditions) have the
+  highest average annual claim cost? Return one row per segment.
+teams: [research]
+datasets: [claims_synthetic]
+max_runs: 5 # per agent session; enforced by the gateway's Cedar policy (the backstop)
+loop: # enforced by the ResearchRun workflow
+  max_sessions: 4 # the agent restarts with feedback after a session without a released result
+  max_hours: 10 # wall-clock cap for the whole run (fits an overnight run)
+approval:
+  mode: auto_if_clean # human | auto_if_clean | auto
+  reviewer: true # a second agent scores each released run; it can only escalate
+job:
+  timeout_seconds: 120
+  cpu: "1"
+  memory: 1Gi
+artifact:
+  file: result.csv
+  columns: # exact header, in order
+    - { name: age_band, type: str }
+    - { name: plan, type: str }
+    - { name: chronic_conditions, type: int }
+    - { name: n_members, type: int }
+    - { name: avg_claim_cost, type: float }
+  group_by: [age_band, plan, chronic_conditions] # the platform recomputes these groups itself
+  max_rows: 500
+  max_bytes: 131072
+  min_group_size: { column: n_members, k: 25 } # applied to the TRUE group size from the snapshot
+  verify: # recomputed from the snapshot; the artifact is rejected if they differ
+    avg_claim_cost: { aggregate: mean, of: claim_cost, tolerance: 0.01 }

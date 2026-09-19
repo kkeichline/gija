@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "governed": {
+      "type": "http",
+      "url": "http://mcp-gateway.gateway.svc.cluster.local:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer ${AGENT_TOKEN}",
+        "X-Session-Id": "${POD_NAME}"
+      }
+    }
+  }
+}

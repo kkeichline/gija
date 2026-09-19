@@ -1,0 +1,46 @@
+# Research launcher: front-door MCP API (server) + Temporal worker (worker), one image.
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: launcher, namespace: launcher }
+spec:
+  replicas: 1
+  strategy: { type: Recreate } # never two workers with different code on the task queue
+  selector: { matchLabels: { app: launcher } }
+  template:
+    metadata: { labels: { app: launcher } }
+    spec:
+      serviceAccountName: launcher
+      enableServiceLinks: false
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: server
+          image: platform:0.1
+          imagePullPolicy: Never
+          command: [uvicorn, launcher.server:app, --host, 0.0.0.0, --port, "8080"]
+          ports: [{ containerPort: 8080 }]
+          env:
+            - { name: HOME, value: /tmp }
+            - name: FRONTDOOR_TOKENS
+              valueFrom: { secretKeyRef: { name: launcher-secrets, key: FRONTDOOR_TOKENS } }
+          readinessProbe: { httpGet: { path: /healthz, port: 8080 }, periodSeconds: 5 }
+          volumeMounts: [{ name: tmp, mountPath: /tmp }]
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+        - name: worker
+          image: platform:0.1
+          imagePullPolicy: Never
+          command: [python, -m, launcher.worker]
+          env:
+            - { name: HOME, value: /tmp }
+            - name: PLATFORM_TOKEN
+              valueFrom: { secretKeyRef: { name: launcher-secrets, key: PLATFORM_TOKEN } }
+          volumeMounts: [{ name: tmp, mountPath: /tmp }]
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+      volumes:
+        - { name: tmp, emptyDir: {} }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: launcher, namespace: launcher }
+spec:
+  selector: { app: launcher }
+  ports: [{ port: 8080, targetPort: 8080 }]

@@ -1,0 +1,44 @@
+{
+  "apiVersion": "v1",
+  "spec": {
+    "automountServiceAccountToken": false,
+    "enableServiceLinks": false,
+    "activeDeadlineSeconds": 1200,
+    "securityContext": {
+      "runAsNonRoot": true,
+      "runAsUser": 1000,
+      "runAsGroup": 1000,
+      "seccompProfile": { "type": "RuntimeDefault" }
+    },
+    "containers": [
+      {
+        "name": "agent-check",
+        "image": "harness-claude:0.1",
+        "workingDir": "/workspace",
+        "command": [
+          "/usr/local/lib/node_modules/@agentclientprotocol/claude-agent-acp/node_modules/@anthropic-ai/claude-agent-sdk-linux-arm64/claude",
+          "-p",
+          "Work the claims_cost_drivers problem using only the governed MCP tools: call list_problems, write a UDF that meets the artifact contract, submit it, run it on claims_synthetic, and report the three most expensive segments with the run_id. Stop after one successful run.",
+          "--allowedTools", "mcp__governed",
+          "--max-turns", "15",
+          "--output-format", "text"
+        ],
+        "env": [
+          { "name": "POD_NAME", "valueFrom": { "fieldRef": { "fieldPath": "metadata.name" } } }
+        ],
+        "envFrom": [
+          { "secretRef": { "name": "harness-claude" } },
+          { "configMapRef": { "name": "harness-model", "optional": true } }
+        ],
+        "resources": {
+          "requests": { "cpu": "250m", "memory": "512Mi" },
+          "limits": { "cpu": "2", "memory": "2Gi" }
+        },
+        "securityContext": {
+          "allowPrivilegeEscalation": false,
+          "capabilities": { "drop": ["ALL"] }
+        }
+      }
+    ]
+  }
+}

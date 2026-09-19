@@ -1,0 +1,29 @@
+#!/bin/sh
+# ACP over stdio to a fresh harness pod.
+#
+# acpx normally spawns a local adapter process and speaks ACP JSON-RPC on its
+# stdin/stdout. Configured as the `claude` agent command, this script creates a
+# pod instead and attaches the same stdin/stdout to it, so the harness runs in its
+# own sandbox (namespace `agents`, egress limited to the model API and the governed
+# gateway) and OpenClaw never runs agent code itself. The pod is deleted on exit.
+set -eu
+
+harness="${1:?usage: k8s-acp-shim <harness>}"
+case "$harness" in
+  claude) ;;
+  *) echo "k8s-acp-shim: no pod template for harness '$harness'" >&2; exit 2 ;;
+esac
+
+suffix=$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' \n')
+pod="acp-${harness}-${suffix}"
+overrides=$(sed "s/__POD__/${pod}/g" "/etc/acp-shim/${harness}.json")
+
+exec kubectl run "$pod" \
+  --namespace agents \
+  --image "harness-${harness}:0.1" \
+  --image-pull-policy Never \
+  --restart Never \
+  --labels "app=acp-harness,harness=${harness}" \
+  --overrides "$overrides" \
+  --pod-running-timeout 2m \
+  --stdin --attach --rm --quiet

@@ -1,0 +1,44 @@
+# One namespace per trust zone. Pod Security "restricted" wherever OpenClaw, agent, or
+# platform code runs, so nothing (including OpenClaw creating harness pods) can ask for
+# privileged pods or host mounts. Only moto, the AWS stand-in, needs "baseline".
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openclaw # coordination layer
+  labels: { pod-security.kubernetes.io/enforce: restricted }
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agents # harness pods (Claude Code over ACP)
+  labels: { pod-security.kubernetes.io/enforce: restricted }
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gateway # governed MCP gateway (AgentCore Gateway + Cedar stand-in)
+  labels: { pod-security.kubernetes.io/enforce: restricted }
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: jobs # network-isolated UDF jobs (SageMaker Processing stand-in)
+  labels: { pod-security.kubernetes.io/enforce: restricted }
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aws-sim # moto (S3, SNS, SQS) and the UDF mover "Lambda"
+  labels: { pod-security.kubernetes.io/enforce: baseline }
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: temporal # workflow engine (Temporal dev server; Step Functions stand-in)
+  labels: { pod-security.kubernetes.io/enforce: restricted }
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: launcher # research launcher: the front doors' only API, and the only thing that starts harness pods
+  labels: { pod-security.kubernetes.io/enforce: restricted }
