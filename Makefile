@@ -6,7 +6,7 @@ IMAGES  := platform:0.1 udf-runner:0.1 harness-claude:0.1 openclaw-k8s:0.1
 KUBECTL := kubectl --context kind-$(CLUSTER)
 
 .DEFAULT_GOAL := help
-.PHONY: help up cluster images secrets deploy ollama model-local model-claude smoke agent-check problems ask status watch decide temporal ui dash hubble drop-demo audit logs pods test down
+.PHONY: help up cluster images secrets deploy ollama model-local model-claude smoke agent-check problems ask status watch decide temporal librechat ui dash hubble drop-demo audit logs pods test down
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-12s %s\n", $$1, $$2}'
@@ -33,6 +33,7 @@ deploy: ## Apply manifests and config, then wait for everything to be ready
 	$(KUBECTL) apply -f k8s/00-namespaces.yaml
 	$(KUBECTL) create configmap openclaw-config -n openclaw --from-file=openclaw/openclaw.json --dry-run=client -o yaml | $(KUBECTL) apply -f -
 	$(KUBECTL) create configmap acp-shim -n openclaw --from-file=openclaw/acp-shim/ --dry-run=client -o yaml | $(KUBECTL) apply -f -
+	$(KUBECTL) create configmap librechat-config -n librechat --from-file=frontdoors/librechat/librechat.yaml --dry-run=client -o yaml | $(KUBECTL) apply -f -
 	@scripts/model.sh ensure
 	$(KUBECTL) apply -f k8s/
 	$(KUBECTL) rollout restart deploy -n gateway mcp-gateway
@@ -44,6 +45,8 @@ deploy: ## Apply manifests and config, then wait for everything to be ready
 	$(KUBECTL) rollout restart deploy -n launcher launcher
 	$(KUBECTL) rollout status deploy -n temporal temporal --timeout=3m
 	$(KUBECTL) rollout status deploy -n launcher launcher --timeout=3m
+	$(KUBECTL) rollout restart deploy -n librechat librechat
+	$(KUBECTL) rollout status deploy -n librechat librechat --timeout=5m
 
 ollama: ## Install Ollama on this Mac and build the local model (one-time, ~19 GB)
 	@command -v ollama >/dev/null || brew install ollama
@@ -88,6 +91,9 @@ watch: ## Front door (CLI): follow research until it needs a decision  ID=resear
 
 decide: ## Front door (CLI): approve/reject promotion   ID=… DECISION=approve AS=approver@example.com
 	@$(RESEARCH) decide --as "$(AS)" --id "$(ID)" --decision "$(or $(DECISION),approve)"
+
+librechat: ## LibreChat front door at http://127.0.0.1:3080 (register any email; approver@example.com approves)
+	$(KUBECTL) port-forward -n librechat svc/librechat 3080:3080
 
 temporal: ## Temporal UI (every research run's history) at http://127.0.0.1:8233 (Ctrl-C to stop)
 	$(KUBECTL) port-forward -n temporal svc/temporal 8233:8233

@@ -46,4 +46,13 @@ for door in ("cli", "openclaw", "librechat", "openwebui", "zeroclaw"):
 print(json.dumps(tokens))' "$frontdoors")"
 printf 'FRONTDOOR_TOKENS=%s\nPLATFORM_TOKEN=%s\n' "$frontdoors" "$platform_token" | apply launcher launcher-secrets
 
+# LibreChat: its own session/encryption secrets (kept across re-runs) and its front-door token.
+lc() { existing librechat librechat-secrets "$1"; }
+door_token() { python3 -c 'import json,sys; print(next(t for t, d in json.loads(sys.argv[1]).items() if d == sys.argv[2]))' "$frontdoors" "$1"; }
+kubectl apply -f k8s/00-namespaces.yaml >/dev/null
+printf 'CREDS_KEY=%s\nCREDS_IV=%s\nJWT_SECRET=%s\nJWT_REFRESH_SECRET=%s\nGIJA_FRONTDOOR_TOKEN=%s\nANTHROPIC_API_KEY=%s\n' \
+  "$(v=$(lc CREDS_KEY); echo "${v:-$(openssl rand -hex 32)}")" "$(v=$(lc CREDS_IV); echo "${v:-$(openssl rand -hex 16)}")" \
+  "$(v=$(lc JWT_SECRET); echo "${v:-$(openssl rand -hex 32)}")" "$(v=$(lc JWT_REFRESH_SECRET); echo "${v:-$(openssl rand -hex 32)}")" \
+  "$(door_token librechat)" "$key" | apply librechat librechat-secrets
+
 echo "Secrets applied. 'make ui' prints the Control UI token."

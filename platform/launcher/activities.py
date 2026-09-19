@@ -84,9 +84,12 @@ def gateway(method: str, path: str, body: dict | None = None) -> dict:
 
 
 @activity.defn
-async def run_harness_session(task: str) -> SessionResult:
-    """Start a Claude Code pod on `task`, wait for it to finish, and collect its answer."""
-    name = await asyncio.to_thread(harness.start, task)
+async def run_harness_session(task: str, name: str) -> SessionResult:
+    """Start a Claude Code pod named `name` on `task`, wait for it, and collect its answer.
+
+    The workflow picks the name so it can show progress (and the gateway session id)
+    while the session is still running."""
+    await asyncio.to_thread(lambda: harness.start(task, name=name))
     activity.heartbeat({"pod": name, "phase": "Pending"})
     try:
         while (final := await asyncio.to_thread(harness.phase, name)) not in harness.TERMINAL | {"Gone"}:
@@ -145,6 +148,17 @@ async def review_run(question: str, run: Run) -> Review:
     return Review(risk=risk, answers_the_question=bool(data.get("answers_the_question")), reviewer=name,
                   flags=[str(f)[:200] for f in (data.get("flags") or [])][:10],
                   rationale=str(data.get("rationale", ""))[:1200])
+
+
+@activity.defn
+async def session_activity(session: str) -> dict:
+    """Recent gateway events for a session, plus the harness pod's phase: is it moving or stuck?"""
+    try:
+        data = await asyncio.to_thread(gateway, "GET", f"/internal/sessions/{session}/activity")
+    except Exception as exc:
+        return {"error": str(exc)[:200]}
+    data["pod_phase"] = await asyncio.to_thread(harness.phase, session)
+    return data
 
 
 @activity.defn

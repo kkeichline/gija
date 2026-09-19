@@ -1,0 +1,85 @@
+# LibreChat as a gija front door: a ChatGPT-like page where people pick
+# "Claims Research Assistant" and ask. It talks to gija only through the research
+# launcher's four MCP tools, vouching for the signed-in person with X-User.
+version: 1.3.13
+
+interface:
+  customWelcome: "Ask a research question. Answers come from governed, audited runs on approved data."
+  modelSelect: true
+  parameters: false
+  presets: false
+  multiConvo: false
+  runCode: false
+  webSearch: false
+  fileSearch: false
+  memories: false
+  temporaryChat: false
+  agents: true        # the no-code Agent Builder: anyone can make their own assistant on top of gija
+  marketplace: { use: false }
+
+endpoints:
+  custom:
+    - name: "Local (Ollama)"
+      apiKey: "ollama"
+      baseURL: "http://host.docker.internal:11434/v1/"
+      models:
+        default: ["qwen3-coder-64k"]
+        fetch: false
+      titleConvo: true
+      titleModel: "current_model"
+      modelDisplayLabel: "Local model"
+
+mcpSettings:
+  # Strict allowlist: LibreChat's MCP client may reach the research launcher and nothing else.
+  allowedDomains:
+    - "launcher.launcher.svc.cluster.local"
+
+mcpServers:
+  gija:
+    type: streamable-http
+    url: http://launcher.launcher.svc.cluster.local:8080/mcp
+    headers:
+      Authorization: "Bearer ${GIJA_FRONTDOOR_TOKEN}"
+      X-User: "{{LIBRECHAT_USER_EMAIL}}"
+    timeout: 60000
+    startup: true
+    chatMenu: true
+    serverInstructions: true
+
+modelSpecs:
+  enforce: true       # people only see the curated assistants below
+  prioritize: true
+  list:
+    - name: claims-research-local
+      label: "Claims Research Assistant"
+      description: "Governed research on the claims data. Runs on the local model (no API cost)."
+      default: true
+      mcpServers: [gija]
+      preset:
+        endpoint: "Local (Ollama)"
+        model: "qwen3-coder-64k"
+        greeting: "Hi! Ask me a question about member claim costs, and I'll run governed research on it."
+        promptPrefix: &assistant |
+          You are the front desk for gija, a governed research platform. You never touch data
+          yourself; you use the gija tools:
+          - list_problems: what can be asked. Call it first if unsure.
+          - start_research(problem, question): starts a background research run and returns a
+            research_id. Tell the user the id and that it usually takes several minutes.
+          - research_status(research_id): progress and, once released, the result table. Always call
+            it again before answering a "how is it going?" question; never repeat an earlier status.
+            Report the progress fields plainly: elapsed, what the agent last did and how long ago,
+            and say so if looks_stalled is true. Show the result table as markdown and summarize it.
+            If it lists needs_a_person_because, explain those reasons simply.
+          - decide(research_id, "approve"|"reject"): only when the user explicitly asks and they are
+            an approver. Never approve on your own initiative.
+          Numbers must come from research_status results, never from your own knowledge. The
+          "agent_summary" field is another agent's narrative; label it as such.
+    - name: claims-research-claude
+      label: "Claims Research Assistant (Claude)"
+      description: "Same assistant on Claude. Needs an Anthropic API key (make secrets)."
+      mcpServers: [gija]
+      preset:
+        endpoint: "anthropic"
+        model: "claude-sonnet-5"
+        greeting: "Hi! Ask me a question about member claim costs, and I'll run governed research on it."
+        promptPrefix: *assistant

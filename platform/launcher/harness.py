@@ -21,10 +21,10 @@ TERMINAL = {"Succeeded", "Failed"}
 
 
 def start(task: str, max_turns: int = 20, deadline_seconds: int = 1800, *, role: str = "researcher",
-          system_prompt: str = "", json_schema: dict | None = None) -> str:
+          system_prompt: str = "", json_schema: dict | None = None, name: str = "") -> str:
     """Start a harness pod. A `researcher` gets the governed MCP tools; a `reviewer` gets no tools,
     no gateway token, and a network policy that reaches only the model."""
-    name = f"{'research' if role == 'researcher' else 'review'}-{secrets.token_hex(4)}"
+    name = name or f"{'research' if role == 'researcher' else 'review'}-{secrets.token_hex(4)}"
     if role == "researcher":
         labels = {"app": "acp-harness", "harness": "claude", "started-by": "launcher"}
         args = ["--allowedTools", "mcp__governed"]

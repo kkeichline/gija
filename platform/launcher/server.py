@@ -9,6 +9,7 @@ X-User (email or name); Cedar then decides per person. The launcher holds the on
 rights to start harness pods, via Temporal.
 """
 
+import datetime as dt
 import json
 import logging
 import os
@@ -29,6 +30,7 @@ from starlette.responses import PlainTextResponse
 from temporalio.client import Client, WorkflowExecutionStatus
 from temporalio.service import RPCError
 
+from launcher.activities import gateway
 from launcher.workflows import MODES, TASK_QUEUE, ResearchRequest, ResearchRun, ResearchState
 
 PLATFORM = Path(os.environ.get("PLATFORM_DIR", "/platform"))
@@ -114,6 +116,39 @@ async def load(research_id: str):
     return handle, desc, await desc.memo_value("request", default={})
 
 
+def progress(state: ResearchState, started: dt.datetime | None) -> dict:
+    """Live progress for a run in flight: is it moving, and on what?"""
+    out = {"elapsed": human(dt.datetime.now(dt.timezone.utc) - started) if started else "?",
+           "stage": state.status, "sessions_used": len(state.sessions)}
+    if not state.sessions:
+        out["detail"] = "waiting for the first harness pod to start"
+        return out
+    session = state.sessions[-1]
+    out["harness_pod"] = session
+    try:
+        activity = gateway("GET", f"/internal/sessions/{session}/activity")
+    except Exception as exc:
+        out["detail"] = f"could not read activity: {str(exc)[:120]}"
+        return out
+    events = activity.get("events", [])
+    out["tool_calls"] = activity.get("count", 0)
+    if events:
+        last = events[-1]
+        ago = dt.timedelta(seconds=max(0, time.time() - last["ts"]))
+        out["last_step"] = " ".join(x for x in (last["event"].replace("_", " "), last.get("action"),
+                                                last.get("decision"), last.get("run_id")) if x)
+        out["last_step_ago"] = human(ago)
+        out["looks_stalled"] = ago > dt.timedelta(minutes=8)
+    else:
+        out["detail"] = "the agent is thinking; it has not called a tool yet"
+    return out
+
+
+def human(delta: dt.timedelta) -> str:
+    seconds = int(delta.total_seconds())
+    return f"{seconds}s" if seconds < 90 else f"{seconds // 60}m {seconds % 60}s"
+
+
 def fabricated_counts(csv_text: str) -> bool:
     rows = [r.split(",") for r in csv_text.strip().splitlines()[1:]]
     return len(rows) >= 5 and len({r[1] for r in rows if len(r) > 1}) == 1
@@ -193,6 +228,8 @@ async def research_status(research_id: str, ctx: Context) -> dict:
                          "flags": state.review.flags, "rationale": state.review.rationale}
     if state.escalation:
         out["needs_a_person_because"] = state.escalation
+    if desc.status == WorkflowExecutionStatus.RUNNING and not state.released_run:
+        out["progress"] = progress(state, desc.start_time)
     released = next((r for r in state.runs if r.run_id == state.released_run), None)
     if released:
         out["released_run"] = released.run_id

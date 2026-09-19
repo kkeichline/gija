@@ -277,11 +277,47 @@ def view(run_id: str) -> dict:
 mcp = MCPServer(
     name="governed-gateway",
     instructions=(
-        "The only way to reach data. Call list_problems first. Submit a UDF defining "
-        "run(df: pandas.DataFrame) -> pandas.DataFrame, then run it against a dataset. "
-        "Only output matching the problem's artifact contract is returned."
+        "The only way to reach data. Call list_problems first: it gives you the artifact contract, "
+        "a UDF template, and exactly how your output will be checked. Submit a UDF defining "
+        "run(df: pandas.DataFrame) -> pandas.DataFrame, call validate_udf (free, no budget), fix "
+        "anything it reports, then run_udf. Only output matching the contract is returned."
     ),
 )
+
+
+def how_output_is_checked(contract: dict) -> list[str]:
+    """The rules the release rule applies, in the agent's own terms. No surprises."""
+    a = contract["artifact"]
+    rules = [f"Write exactly these columns, in this order: {[c['name'] for c in a['columns']]}.",
+             f"At most {a['max_rows']} rows and {a['max_bytes']} bytes."]
+    if a.get("group_by"):
+        rules.append(f"One row per group of {a['group_by']}. The platform recomputes each group from the "
+                     "snapshot: groups that don't exist are rejected.")
+    if a.get("min_group_size"):
+        k = a["min_group_size"]
+        rules.append(f"{k['column']} must equal the group's true size, which the platform counts itself. "
+                     f"Writing a number that doesn't match gets the whole artifact rejected; groups smaller "
+                     f"than {k['k']} are suppressed for privacy (that is normal, not an error).")
+    for name, v in (a.get("verify") or {}).items():
+        rules.append(f"{name} must equal {v['aggregate']}({v['of']}) for the group; the platform recomputes it.")
+    rules.append("Released results are reviewed for hard-coded values, for gaming these rules, and for "
+                 "whether they actually answer the question. Compute everything from the data you are given.")
+    return rules
+
+
+def udf_template(contract: dict) -> str:
+    a = contract["artifact"]
+    keys = a.get("group_by") or []
+    counter = (a.get("min_group_size") or {}).get("column")
+    aggs = [f'{counter}=("{keys[0] if keys else "x"}", "size")'] if counter else []
+    aggs += [f'{name}=("{v["of"]}", "{v["aggregate"]}")' for name, v in (a.get("verify") or {}).items()]
+    return (f"""import pandas as pd
+
+def run(df):
+    keys = {keys}
+    out = df.groupby(keys).agg({", ".join(aggs)}).reset_index()
+    return out[{[c["name"] for c in a["columns"]]}]
+""")
 
 
 @mcp.tool()
@@ -304,9 +340,13 @@ async def list_problems(ctx: Context) -> dict:
             "question": c["question"].strip(),
             "datasets": datasets,
             "artifact_contract": c["artifact"],
-            "runs_remaining": c["max_runs"] - runs_used(agent, session, pid),
+            "how_your_output_is_checked": how_output_is_checked(c),
+            "udf_template": udf_template(c),
             "udf_interface": "def run(df: pandas.DataFrame) -> pandas.DataFrame  # df has only the columns listed",
             "allowed_imports": sorted(ALLOWED_IMPORTS),
+            "runs_remaining": c["max_runs"] - runs_used(agent, session, pid),
+            "advice": ("Call validate_udf first: it checks your UDF against the contract on a small sample "
+                       "and does NOT use your run budget. Only then call run_udf."),
         })
     return {"agent": agent, "session": session, "problems": problems}
 
@@ -376,6 +416,56 @@ async def run_udf(problem: str, udf_id: str, dataset: str, ctx: Context) -> dict
 
 
 @mcp.tool()
+async def validate_udf(problem: str, udf_id: str, dataset: str, ctx: Context) -> dict:
+    """Dry-run a staged UDF on a small sample and report contract problems. Free: no run budget used."""
+    agent, session = caller(ctx)
+    contract = CONTRACTS.get(problem)
+    if contract is None or dataset not in CATALOG["datasets"] or not ID.match(udf_id):
+        raise ToolError("unknown problem, dataset, or udf_id")
+    authorize(agent, session, "run_udf", "Dataset", dataset, {
+        "problem": problem, "problem_teams": contract["teams"],
+        "runs_used": 0, "max_runs": contract["max_runs"],  # a dry run never spends the budget
+    })
+    try:
+        code = s3.get_object(Bucket=STAGING_BUCKET, Key=f"{problem}/{udf_id}.py")["Body"].read()
+    except s3.exceptions.NoSuchKey:
+        raise ToolError(f"no staged UDF {udf_id} for {problem}")
+
+    run_id = "dry-" + uuid.uuid4().hex[:10]
+    run_dir = RUNS / run_id
+    for sub in ("input", "code", "output"):
+        (run_dir / sub).mkdir(parents=True)
+    team = CATALOG["agents"][agent]["team"]
+    rows = await asyncio.to_thread(lake.snapshot, CATALOG, dataset, team, LAKE,
+                                   run_dir / "input" / "data.parquet", 2000)
+    (run_dir / "code" / "udf.py").write_bytes(code)
+    await asyncio.to_thread(launch_job, run_id, contract)
+    audit(event="udf_validated", agent=agent, session=session, dry_run=run_id, udf_id=udf_id, sample_rows=rows)
+
+    outcome = None
+    for _ in range(60):
+        outcome = await asyncio.to_thread(job_outcome, run_id)
+        if outcome:
+            break
+        await asyncio.sleep(2)
+    if outcome is None:
+        return {"ok": False, "problems": ["the validation job did not finish in time"]}
+    if outcome[0] == "failed":
+        return {"ok": False, "problems": [f"your UDF raised: {outcome[1]}"], "sample_rows": rows}
+
+    # Same release rule, minus suppression: on a sample almost every group is small.
+    sample_contract = json.loads(json.dumps(contract))
+    sample_contract["artifact"].pop("min_group_size", None)
+    rel = release.apply(sample_contract, run_dir / "output", run_dir / "input" / "data.parquet")
+    flags = checks.run(contract, code.decode("utf-8", "replace"), rel.csv_text) if rel.released else []
+    return {"ok": bool(rel.released) and not flags,
+            "problems": ([] if rel.released else rel.notes) + flags,
+            "sample_rows": rows,
+            "note": ("Validation ran on a sample and skipped small-group suppression; the real run applies it. "
+                     "Nothing here counts against your run budget.")}
+
+
+@mcp.tool()
 async def get_run(run_id: str, ctx: Context) -> dict:
     """Get a run's status and, if released, its artifact."""
     agent, session = caller(ctx)
@@ -423,6 +513,22 @@ async def session_runs(request: Request) -> JSONResponse:
         v["udf_code"] = code.read_text()[:20000] if code.exists() else ""  # for the reviewer; never sent to agents
         runs.append(v)
     return JSONResponse({"session": session, "runs": runs})
+
+
+@mcp.custom_route("/internal/sessions/{session}/activity", methods=["GET"])
+async def session_activity(request: Request) -> JSONResponse:
+    """The session's recent audit events, so a workflow can show progress (and spot a stall)."""
+    if not platform_caller(request):
+        return JSONResponse({"error": "unauthenticated"}, status_code=401)
+    session = request.path_params["session"]
+    events = []
+    with open(RUNS / "audit.jsonl") as f:
+        for line in f:
+            if f'"session": "{session}"' in line:
+                e = json.loads(line)
+                events.append({"ts": e["ts"], "event": e["event"], "action": e.get("action", ""),
+                               "decision": e.get("decision", ""), "run_id": e.get("run_id", "")})
+    return JSONResponse({"session": session, "events": events[-25:], "count": len(events)})
 
 
 @mcp.custom_route("/internal/runs/{run_id}/approve", methods=["POST"])

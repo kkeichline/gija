@@ -124,6 +124,7 @@ spec:
     # Front doors. Each one added later gets its namespace listed here.
     - fromEndpoints:
         - { matchLabels: { "k8s:io.kubernetes.pod.namespace": openclaw, app: openclaw } }
+        - { matchLabels: { "k8s:io.kubernetes.pod.namespace": librechat, app: librechat } }
       toPorts: [{ ports: [{ port: "8080", protocol: TCP }] }]
   egress:
     - toEndpoints: [{ matchLabels: { "k8s:io.kubernetes.pod.namespace": kube-system, "k8s:k8s-app": kube-dns } }]
@@ -162,3 +163,35 @@ spec:
       toPorts: [{ ports: [{ port: "443", protocol: TCP }] }]
     - toCIDR: [192.168.65.254/32] # local model (Ollama on the Mac)
       toPorts: [{ ports: [{ port: "11434", protocol: TCP }] }]
+---
+# --- librechat: people reach it by port-forward; it reaches Mongo, the launcher, and the model.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: default-deny, namespace: librechat }
+spec: { podSelector: {}, policyTypes: [Ingress, Egress] }
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata: { name: librechat, namespace: librechat }
+spec:
+  endpointSelector: { matchLabels: { app: librechat } }
+  egress:
+    - toEndpoints: [{ matchLabels: { "k8s:io.kubernetes.pod.namespace": kube-system, "k8s:k8s-app": kube-dns } }]
+      toPorts: [{ ports: [{ port: "53", protocol: ANY }], rules: { dns: [{ matchPattern: "*" }] } }]
+    - toEndpoints: [{ matchLabels: { app: mongo } }]
+      toPorts: [{ ports: [{ port: "27017", protocol: TCP }] }]
+    - toEndpoints: [{ matchLabels: { "k8s:io.kubernetes.pod.namespace": launcher, app: launcher } }]
+      toPorts: [{ ports: [{ port: "8080", protocol: TCP }] }]
+    - toFQDNs: [{ matchName: api.anthropic.com }]
+      toPorts: [{ ports: [{ port: "443", protocol: TCP }] }]
+    - toCIDR: [192.168.65.254/32] # local model (Ollama on the Mac)
+      toPorts: [{ ports: [{ port: "11434", protocol: TCP }] }]
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata: { name: mongo, namespace: librechat }
+spec:
+  endpointSelector: { matchLabels: { app: mongo } }
+  ingress:
+    - fromEndpoints: [{ matchLabels: { app: librechat } }]
+      toPorts: [{ ports: [{ port: "27017", protocol: TCP }] }]

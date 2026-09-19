@@ -70,8 +70,9 @@ def mocked_activities(outcomes: list[str], approvals: list, review: Review | Non
     sessions = iter(range(100))
 
     @activity.defn(name="run_harness_session")
-    async def run_harness_session(task: str) -> SessionResult:
-        return SessionResult(session=f"research-s{next(sessions)}", answer=f"answer to: {task[:20]}", is_error=False)
+    async def run_harness_session(task: str, name: str) -> SessionResult:
+        next(sessions)
+        return SessionResult(session=name, answer=f"answer to: {task[:20]}", is_error=False)
 
     @activity.defn(name="fetch_runs")
     async def fetch_runs(session: str) -> list[Run]:
@@ -111,7 +112,7 @@ async def test_retries_with_feedback_then_waits_for_approval_and_promotes():
     state, approvals = await run_workflow(["rejected", "released"], decision=["approve", APPROVER])
     assert len(state.sessions) == 2
     assert state.status == "approved: UDF promoted" and state.decided_by == APPROVER
-    assert approvals == [("run-research-s1", APPROVER)]
+    assert approvals == [(f"run-{state.sessions[-1]}", APPROVER)]
 
 
 async def test_session_budget_is_bounded():
@@ -132,13 +133,13 @@ async def test_unanswered_approval_expires():
 async def test_auto_if_clean_promotes_a_clean_run_without_a_person():
     state, approvals = await run_workflow(["released"], mode="auto_if_clean")
     assert state.status == "approved: UDF promoted automatically"
-    assert approvals == [("run-research-s0", "policy:auto_if_clean")] and not state.escalation
+    assert approvals == [(f"run-{state.sessions[-1]}", "policy:auto_if_clean")] and not state.escalation
 
 
 async def test_auto_if_clean_escalates_on_a_deterministic_check():
     state, approvals = await run_workflow(["released"], mode="auto_if_clean", checks=["calls __import__()"],
                                           decision=["approve", APPROVER])
-    assert state.escalation == ["check: calls __import__()"] and approvals == [("run-research-s0", APPROVER)]
+    assert state.escalation == ["check: calls __import__()"] and approvals == [(f"run-{state.sessions[-1]}", APPROVER)]
 
 
 async def test_auto_if_clean_escalates_when_the_reviewer_is_worried():

@@ -22,6 +22,8 @@ spec:
             - { name: HOME, value: /tmp }
             - name: FRONTDOOR_TOKENS
               valueFrom: { secretKeyRef: { name: launcher-secrets, key: FRONTDOOR_TOKENS } }
+            - name: PLATFORM_TOKEN # reads session progress from the gateway's /internal API
+              valueFrom: { secretKeyRef: { name: launcher-secrets, key: PLATFORM_TOKEN } }
           readinessProbe: { httpGet: { path: /healthz, port: 8080 }, periodSeconds: 5 }
           volumeMounts: [{ name: tmp, mountPath: /tmp }]
           securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }

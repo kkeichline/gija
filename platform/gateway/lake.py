@@ -44,8 +44,10 @@ def generate(lake_dir: Path, members: int = 20000) -> None:
         TO '{lake_dir}/members_pii.parquet' (FORMAT parquet)""")
 
 
-def snapshot(catalog: dict, dataset: str, team: str, lake_dir: Path, dest: Path) -> int:
-    """Write the team's column- and row-filtered view of `dataset` to `dest`; return row count."""
+def snapshot(catalog: dict, dataset: str, team: str, lake_dir: Path, dest: Path, limit: int = 0) -> int:
+    """Write the team's column- and row-filtered view of `dataset` to `dest`; return row count.
+
+    `limit` takes a sample instead of the whole snapshot (used by validate_udf's dry run)."""
     grant = catalog["datasets"][dataset]["grants"].get(team)
     if grant is None:
         raise PermissionError(f"team {team!r} has no grant on {dataset!r}")
@@ -54,7 +56,7 @@ def snapshot(catalog: dict, dataset: str, team: str, lake_dir: Path, dest: Path)
     con = duckdb.connect()
     con.execute(f"""
         COPY (SELECT {cols} FROM read_parquet('{lake_dir / dataset}.parquet')
-              WHERE {grant['row_filter']})
+              WHERE {grant['row_filter']}{f' LIMIT {int(limit)}' if limit else ''})
         TO '{dest}' (FORMAT parquet)""")
     return con.execute(f"SELECT count(*) FROM read_parquet('{dest}')").fetchone()[0]
 
