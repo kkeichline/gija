@@ -31,12 +31,12 @@ spec:
             - { name: OLLAMA_BASE_URL, value: "http://host.docker.internal:11434" }
             - { name: ENABLE_OPENAI_API, value: "false" }
             - { name: ENABLE_FORWARD_USER_INFO_HEADERS, value: "true" }  # so gija knows who is asking
-            - { name: ENABLE_SIGNUP, value: "true" }  # local demo; first account becomes admin
+            - { name: ENABLE_SIGNUP, value: "true" }  # the first account becomes the administrator
             - { name: WEBUI_NAME, value: "gija research" }
             - { name: DEFAULT_MODELS, value: "qwen3-coder-64k:latest" }
             - { name: ENABLE_PERSISTENT_CONFIG, value: "false" }  # env is the source of truth, like the repo
             # No model downloads at startup: it reaches for huggingface.co otherwise, which the
-            # network policy blocks (and which this demo has no use for).
+            # network policy blocks. gija does not use that model.
             - { name: OFFLINE_MODE, value: "true" }
             - { name: RAG_EMBEDDING_MODEL_AUTO_UPDATE, value: "false" }
             - { name: ANONYMIZED_TELEMETRY, value: "false" }

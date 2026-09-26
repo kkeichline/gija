@@ -66,7 +66,7 @@ spec:
             - { name: MONGO_URI, value: "mongodb://mongo.librechat.svc.cluster.local:27017/LibreChat" }
             - { name: DOMAIN_CLIENT, value: "http://127.0.0.1:3080" }
             - { name: DOMAIN_SERVER, value: "http://127.0.0.1:3080" }
-            - { name: ALLOW_REGISTRATION, value: "true" }  # local demo: anyone at the laptop can make a user
+            - { name: ALLOW_REGISTRATION, value: "true" }  # anyone who reaches the page can create an account
             - { name: ALLOW_EMAIL_LOGIN, value: "true" }
             - { name: ALLOW_SOCIAL_LOGIN, value: "false" }
             - { name: SEARCH, value: "false" }  # no Meilisearch; keeps the footprint small

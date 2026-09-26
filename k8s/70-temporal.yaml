@@ -1,5 +1,5 @@
 # Temporal dev server: one binary with SQLite and the Web UI (`make temporal` for the UI).
-# Durable enough for a laptop demo; in AWS this is Temporal Cloud or Step Functions.
+# Suitable for one machine. The managed equivalents are Temporal Cloud and AWS Step Functions.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata: { name: temporal-data, namespace: temporal }
