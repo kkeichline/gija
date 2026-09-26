@@ -238,6 +238,29 @@ How it's configured ([librechat.yaml](frontdoors/librechat/librechat.yaml)):
   ([SERVER-121912](https://jira.mongodb.org/browse/SERVER-121912)), which includes
   Docker Desktop's current VM kernel.
 
+### Open WebUI: the other chat front door
+
+```bash
+make openwebui     # http://127.0.0.1:8080  (the first account you create is the admin)
+```
+
+Same idea as LibreChat, different trade-offs. It keeps its state in a SQLite file (no
+database to run), talks to Ollama directly, and gets gija preconfigured as an MCP tool
+server through `TOOL_SERVER_CONNECTIONS`, so nobody has to paste a token into an admin
+screen. Two quirks worth knowing:
+
+- **It reports "Initialized 0 tool server(s)" at startup.** That's normal: it prefetches
+  only OpenAPI tool servers; MCP servers connect when a signed-in person chats.
+- **`OFFLINE_MODE=true` is required here.** By default it downloads an embedding model
+  from huggingface.co at startup, which this namespace's network policy blocks (the
+  policy caught it; Hubble showed the dropped SYNs). Nothing in this demo needs it.
+- **Identity:** it forwards `X-OpenWebUI-User-Email` when
+  `ENABLE_FORWARD_USER_INFO_HEADERS=true`; the launcher accepts that as well as its own
+  `X-User`. Forwarding to *MCP* tool servers has been patchy upstream
+  ([#21134](https://github.com/open-webui/open-webui/issues/21134)), so check the
+  gateway's `requested_by` after your first question; if it shows the front door instead
+  of the person, the fix is to expose the launcher's four tools over OpenAPI as well.
+
 ## Unattended research: loop limits, approval modes, and the reviewer
 
 Each problem's contract sets how far research may go on its own:

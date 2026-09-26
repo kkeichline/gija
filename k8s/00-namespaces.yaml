@@ -48,3 +48,9 @@ kind: Namespace
 metadata:
   name: librechat # front door: LibreChat + its MongoDB
   labels: { pod-security.kubernetes.io/enforce: restricted }
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openwebui # front door: Open WebUI
+  labels: { pod-security.kubernetes.io/enforce: restricted }

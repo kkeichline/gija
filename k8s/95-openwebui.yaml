@@ -1,0 +1,56 @@
+# Open WebUI front door (make openwebui → http://127.0.0.1:8080). Like LibreChat it holds
+# only a front-door token: no cluster rights, no gateway token, no data access.
+# It stores its own state in SQLite on a volume, so there's no database to run.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: openwebui-data, namespace: openwebui }
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 2Gi } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: openwebui, namespace: openwebui }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: openwebui } }
+  template:
+    metadata: { labels: { app: openwebui } }
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext: { runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: openwebui
+          image: ghcr.io/open-webui/open-webui:v0.11.3
+          ports: [{ containerPort: 8080 }]
+          envFrom: [{ secretRef: { name: openwebui-secrets } }]
+          env:
+            - { name: DATA_DIR, value: /app/backend/data }
+            - { name: OLLAMA_BASE_URL, value: "http://host.docker.internal:11434" }
+            - { name: ENABLE_OPENAI_API, value: "false" }
+            - { name: ENABLE_FORWARD_USER_INFO_HEADERS, value: "true" }  # so gija knows who is asking
+            - { name: ENABLE_SIGNUP, value: "true" }  # local demo; first account becomes admin
+            - { name: WEBUI_NAME, value: "gija research" }
+            - { name: DEFAULT_MODELS, value: "qwen3-coder-64k:latest" }
+            - { name: ENABLE_PERSISTENT_CONFIG, value: "false" }  # env is the source of truth, like the repo
+            # No model downloads at startup: it reaches for huggingface.co otherwise, which the
+            # network policy blocks (and which this demo has no use for).
+            - { name: OFFLINE_MODE, value: "true" }
+            - { name: RAG_EMBEDDING_MODEL_AUTO_UPDATE, value: "false" }
+            - { name: ANONYMIZED_TELEMETRY, value: "false" }
+            - { name: SCARF_NO_ANALYTICS, value: "true" }
+            - { name: DO_NOT_TRACK, value: "true" }
+          volumeMounts: [{ name: data, mountPath: /app/backend/data }]
+          readinessProbe: { httpGet: { path: /health, port: 8080 }, periodSeconds: 5, failureThreshold: 60 }
+          resources: { requests: { cpu: 250m, memory: 512Mi }, limits: { memory: 2Gi } }
+          securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: [ALL] } }
+      volumes: [{ name: data, persistentVolumeClaim: { claimName: openwebui-data } }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: openwebui, namespace: openwebui }
+spec:
+  selector: { app: openwebui }
+  ports: [{ port: 8080, targetPort: 8080 }]
