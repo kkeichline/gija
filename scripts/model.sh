@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Points the demo at Claude (Anthropic API) or at a local Ollama model on this Mac.
+# Points gija at Claude (Anthropic API) or at a local Ollama model on this host.
 # Only the model endpoint changes; the governed gateway, policies, and jobs don't.
 #
 #   scripts/model.sh local    # Coordinator + Claude Code use Ollama (no API spend)

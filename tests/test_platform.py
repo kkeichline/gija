@@ -109,7 +109,7 @@ def test_honest_artifact_is_released_and_small_groups_suppressed(tmp_path, snaps
 
 
 def test_fabricated_counts_are_rejected(tmp_path, snapshot):
-    # The real incident: the agent wrote n_members=100 on every row to pass suppression.
+    # A UDF that writes the same count on every row to pass small-group suppression.
     write(tmp_path, [(*r[:3], 100, r[4]) for r in truth(snapshot)])
     rel = release.apply(CONTRACT, tmp_path, snapshot)
     assert not rel.released and "true size" in rel.notes[0]
