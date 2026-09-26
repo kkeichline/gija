@@ -1,0 +1,50 @@
+# ZeroClaw front door (make zeroclaw → http://127.0.0.1:42617). A single Rust binary with
+# secure defaults: deny-by-default tools, pairing-protected gateway. Like the other front
+# doors it holds only a launcher token: no cluster rights, no gateway token, no data.
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: zeroclaw, namespace: zeroclaw }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: zeroclaw } }
+  template:
+    metadata: { labels: { app: zeroclaw } }
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext: { runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: zeroclaw
+          # ZeroClaw publishes no version tags on GHCR, so :latest is pinned by digest (v0.8.5 era).
+          image: ghcr.io/zeroclaw-labs/zeroclaw@sha256:ba9c76b9287c125ec9cc9a8270654f2c0efbd610eef3e00eece3cd11f6c083e0
+          args: ["daemon"]
+          ports: [{ name: gateway, containerPort: 42617 }]
+          envFrom: [{ secretRef: { name: zeroclaw-secrets } }]
+          env:
+            - { name: HOME, value: /zeroclaw-data }
+            - { name: LANG, value: C.UTF-8 }
+            - { name: ZEROCLAW_WORKSPACE, value: /zeroclaw-data/workspace }
+            - { name: ZEROCLAW_GATEWAY_PORT, value: "42617" }
+          volumeMounts:
+            - { name: state, mountPath: /zeroclaw-data/.zeroclaw }
+            - { name: config, mountPath: /zeroclaw-data/.zeroclaw/config.toml, subPath: config.toml, readOnly: true }
+            - { name: workspace, mountPath: /zeroclaw-data/workspace }
+          readinessProbe: { httpGet: { path: /health, port: gateway }, periodSeconds: 10, failureThreshold: 30 }
+          livenessProbe: { httpGet: { path: /health, port: gateway }, periodSeconds: 60, initialDelaySeconds: 30 }
+          resources: { requests: { cpu: 100m, memory: 64Mi }, limits: { memory: 512Mi } }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+      volumes:
+        - { name: config, configMap: { name: zeroclaw-config } }
+        - { name: state, emptyDir: {} }
+        - { name: workspace, emptyDir: {} }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: zeroclaw, namespace: zeroclaw }
+spec:
+  selector: { app: zeroclaw }
+  ports: [{ port: 42617, targetPort: 42617 }]

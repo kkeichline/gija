@@ -6,7 +6,7 @@ IMAGES  := platform:0.1 udf-runner:0.1 harness-claude:0.1 openclaw-k8s:0.1
 KUBECTL := kubectl --context kind-$(CLUSTER)
 
 .DEFAULT_GOAL := help
-.PHONY: help up cluster images secrets deploy ollama model-local model-claude smoke agent-check problems ask status watch decide temporal librechat openwebui ui dash hubble drop-demo audit logs pods test down
+.PHONY: help up cluster images secrets deploy ollama model-local model-claude smoke agent-check problems ask status watch decide temporal librechat openwebui zeroclaw zeroclaw-pair ui dash hubble drop-demo audit logs pods test down
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-12s %s\n", $$1, $$2}'
@@ -49,6 +49,9 @@ deploy: ## Apply manifests and config, then wait for everything to be ready
 	$(KUBECTL) rollout status deploy -n librechat librechat --timeout=5m
 	$(KUBECTL) rollout restart deploy -n openwebui openwebui
 	$(KUBECTL) rollout status deploy -n openwebui openwebui --timeout=5m
+	$(KUBECTL) create configmap zeroclaw-config -n zeroclaw --from-file=frontdoors/zeroclaw/config.toml --dry-run=client -o yaml | $(KUBECTL) apply -f -
+	$(KUBECTL) rollout restart deploy -n zeroclaw zeroclaw
+	$(KUBECTL) rollout status deploy -n zeroclaw zeroclaw --timeout=5m
 
 ollama: ## Install Ollama on this Mac and build the local model (one-time, ~19 GB)
 	@command -v ollama >/dev/null || brew install ollama
@@ -93,6 +96,12 @@ watch: ## Front door (CLI): follow research until it needs a decision  ID=resear
 
 decide: ## Front door (CLI): approve/reject promotion   ID=… DECISION=approve AS=approver@example.com
 	@$(RESEARCH) decide --as "$(AS)" --id "$(ID)" --decision "$(or $(DECISION),approve)"
+
+zeroclaw: ## ZeroClaw front door at http://127.0.0.1:42617 (pairing code: make zeroclaw-pair)
+	$(KUBECTL) port-forward -n zeroclaw svc/zeroclaw 42617:42617
+
+zeroclaw-pair: ## Show ZeroClaw's pairing code / gateway token from its log
+	@$(KUBECTL) logs -n zeroclaw deploy/zeroclaw --tail=200 | grep -iE 'pair|token|code' | tail -5
 
 openwebui: ## Open WebUI front door at http://127.0.0.1:8080 (first account becomes admin)
 	$(KUBECTL) port-forward -n openwebui svc/openwebui 8080:8080

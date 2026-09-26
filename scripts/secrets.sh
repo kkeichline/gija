@@ -70,4 +70,7 @@ print(json.dumps([{
 }]))' "$(door_token openwebui)")"
 printf 'WEBUI_SECRET_KEY=%s\nTOOL_SERVER_CONNECTIONS=%s\n' "$owui_secret" "$tool_servers" | apply openwebui openwebui-secrets
 
+# ZeroClaw: just its front-door token (its config.toml reads ${GIJA_FRONTDOOR_TOKEN}).
+printf 'GIJA_FRONTDOOR_TOKEN=%s\n' "$(door_token zeroclaw)" | apply zeroclaw zeroclaw-secrets
+
 echo "Secrets applied. 'make ui' prints the Control UI token."

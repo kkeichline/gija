@@ -54,3 +54,9 @@ kind: Namespace
 metadata:
   name: openwebui # front door: Open WebUI
   labels: { pod-security.kubernetes.io/enforce: restricted }
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: zeroclaw # front door: ZeroClaw (single-operator, secure defaults)
+  labels: { pod-security.kubernetes.io/enforce: restricted }
