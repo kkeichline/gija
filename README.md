@@ -122,6 +122,8 @@ credentials, and no gateway token.
 | ZeroClaw | `make zeroclaw` | http://127.0.0.1:42617 | one operator, set in config | none |
 | OpenClaw | `make ui` | http://127.0.0.1:18789 | one operator | files and SQLite |
 
+`docs/front-doors.md` compares the five front doors.
+
 LibreChat and Open WebUI support accounts. Create the first account in the web page.
 ZeroClaw requires a pairing code. Print the current code:
 
