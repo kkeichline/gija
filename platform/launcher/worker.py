@@ -5,6 +5,7 @@ import logging
 import os
 
 from kubernetes import config as k8s_config
+from temporalio import workflow
 from temporalio.client import Client
 from temporalio.worker import Worker
 
@@ -16,8 +17,11 @@ async def main() -> None:
     logging.basicConfig(level=logging.INFO)
     k8s_config.load_incluster_config()
     temporal = await Client.connect(os.environ.get("TEMPORAL_ADDRESS", "temporal.temporal.svc.cluster.local:7233"))
+    # A nondeterminism error means the run's recorded history predates a change to ResearchRun.
+    # Fail that run instead of retrying its workflow task forever, which would report it as Running.
     worker = Worker(temporal, task_queue=TASK_QUEUE, workflows=[ResearchRun],
-                    activities=[run_harness_session, fetch_runs, review_run, session_activity, approve_run])
+                    activities=[run_harness_session, fetch_runs, review_run, session_activity, approve_run],
+                    workflow_failure_exception_types=[workflow.NondeterminismError])
     logging.info("research worker polling task queue %r", TASK_QUEUE)
     await worker.run()
 
