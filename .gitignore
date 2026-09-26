@@ -6,3 +6,18 @@ __pycache__/
 *.log
 .env
 .env.*
+
+# Tool and environment directories at the repository root, kept out of the repository.
+# The leading slash matters: harness/claude/workspace/.claude/ is part of the agent image.
+/.claude/
+/.cursor/
+/.aider*
+/.continue/
+/.windsurf/
+/.gemini/
+/.codeium/
+/.vscode/
+/.idea/
+/.devcontainer/
+/.direnv/
+/.envrc
