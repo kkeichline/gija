@@ -68,7 +68,9 @@ def caller(ctx: Context) -> tuple[str, str]:
     if front_door is None:
         audit(event="authn", decision="DENY", reason="unknown front-door token")
         raise ToolError("unauthenticated")
-    user = re.sub(r"[^\w.@+-]", "", headers.get("x-user", "").strip().lower())[:128]
+    # Front doors identify the person differently: gija's own header, or Open WebUI's.
+    raw = headers.get("x-user") or headers.get("x-openwebui-user-email") or ""
+    user = re.sub(r"[^\w.@+-]", "", raw.strip().lower())[:128]
     return front_door, user or f"{front_door}:anonymous"
 
 

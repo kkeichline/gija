@@ -55,4 +55,19 @@ printf 'CREDS_KEY=%s\nCREDS_IV=%s\nJWT_SECRET=%s\nJWT_REFRESH_SECRET=%s\nGIJA_FR
   "$(v=$(lc JWT_SECRET); echo "${v:-$(openssl rand -hex 32)}")" "$(v=$(lc JWT_REFRESH_SECRET); echo "${v:-$(openssl rand -hex 32)}")" \
   "$(door_token librechat)" "$key" | apply librechat librechat-secrets
 
+# Open WebUI: session key, and its gija tool server preconfigured (no admin clicking).
+owui_secret="$(existing openwebui openwebui-secrets WEBUI_SECRET_KEY)"; owui_secret="${owui_secret:-$(fresh)}"
+tool_servers="$(python3 -c '
+import json, sys
+print(json.dumps([{
+    "url": "http://launcher.launcher.svc.cluster.local:8080",
+    "path": "http://launcher.launcher.svc.cluster.local:8080/mcp",
+    "type": "mcp",
+    "auth_type": "bearer",
+    "key": sys.argv[1],
+    "config": {"enable": True},
+    "info": {"name": "gija", "description": "Governed research: ask, follow, approve."},
+}]))' "$(door_token openwebui)")"
+printf 'WEBUI_SECRET_KEY=%s\nTOOL_SERVER_CONNECTIONS=%s\n' "$owui_secret" "$tool_servers" | apply openwebui openwebui-secrets
+
 echo "Secrets applied. 'make ui' prints the Control UI token."
