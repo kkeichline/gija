@@ -285,6 +285,13 @@ with `AWS_ENDPOINT_URL`, so those calls also work against Amazon Web Services (A
 - The reviewer agent is a language model. Deterministic checks must also pass before an
   automatic promotion.
 - An agent session lives in its pod. A restarted session starts again from the question.
+- Editing `platform/launcher/workflows.py` breaks any run already in flight. That run
+  cannot replay its history, so Temporal retries its workflow task and the run keeps
+  reporting `Running`. Terminate the run:
+
+  ```bash
+  kubectl exec -n temporal deploy/temporal -- temporal workflow terminate --address 127.0.0.1:7233 --reason "workflow code changed" --workflow-id research-xxxxxxxx
+  ```
 - MongoDB is pinned to version 7.0. Version 8 does not start on Linux kernel 6.19 to
   7.0.13 ([SERVER-121912](https://jira.mongodb.org/browse/SERVER-121912)).
 
