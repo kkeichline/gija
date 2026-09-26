@@ -1,0 +1,46 @@
+# ZeroClaw as a gija front door: a small, secure-by-default assistant that reaches gija
+# through the research launcher's MCP tools and nothing else.
+#
+# ZeroClaw is single-operator by design: one person per gateway. The person it acts for
+# is set once in the X-User header below, and the launcher's Cedar policies decide from
+# that. (LibreChat and Open WebUI are multi-user and pass each signed-in person instead.)
+schema_version = 3
+
+[providers.models.ollama.host]
+model = "qwen3-coder-64k"
+uri = "http://host.docker.internal:11434" # Ollama runs on the Mac, for the GPU
+
+[agents.assistant]
+model_provider = "ollama.host"
+risk_profile = "assistant"
+mcp_bundles = ["gija"] # an agent without a bundle gets no MCP servers at all
+system_prompt = """
+You are the front desk for gija, a governed research platform. You never touch data
+yourself; you use the gija tools:
+- list_problems: what can be asked.
+- start_research(problem, question): starts a background run, returns a research_id.
+- research_status(research_id): call it fresh every time; report elapsed, the last step
+  and how long ago, and say so if looks_stalled is true. Show released tables as
+  markdown and summarize them.
+- decide(research_id, "approve"|"reject"): only when the operator explicitly asks.
+Numbers come from research_status results, never from your own knowledge.
+"""
+
+[risk_profiles.assistant]
+level = "supervised"
+auto_approve = ["memory_recall", "memory_store"] # gija tools still go through the gateway's own checks
+
+[[mcp.servers]]
+name = "gija"
+transport = "http"
+url = "http://launcher.launcher.svc.cluster.local:8080/mcp"
+headers = { "Authorization" = "Bearer ${GIJA_FRONTDOOR_TOKEN}", "X-User" = "operator@example.com" }
+
+[mcp_bundles.gija]
+servers = ["gija"]
+
+[gateway]
+port = 42617
+host = "[::]"             # inside the pod only: the NetworkPolicy denies all ingress, and
+allow_public_bind = true  # `make zeroclaw` reaches it by port-forward. Binding loopback would
+require_pairing = true    # break the health probes. Pairing is ZeroClaw's own protection.

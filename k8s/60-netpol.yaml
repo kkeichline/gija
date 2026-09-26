@@ -126,6 +126,7 @@ spec:
         - { matchLabels: { "k8s:io.kubernetes.pod.namespace": openclaw, app: openclaw } }
         - { matchLabels: { "k8s:io.kubernetes.pod.namespace": librechat, app: librechat } }
         - { matchLabels: { "k8s:io.kubernetes.pod.namespace": openwebui, app: openwebui } }
+        - { matchLabels: { "k8s:io.kubernetes.pod.namespace": zeroclaw, app: zeroclaw } }
       toPorts: [{ ports: [{ port: "8080", protocol: TCP }] }]
   egress:
     - toEndpoints: [{ matchLabels: { "k8s:io.kubernetes.pod.namespace": kube-system, "k8s:k8s-app": kube-dns } }]
@@ -208,6 +209,25 @@ kind: CiliumNetworkPolicy
 metadata: { name: openwebui, namespace: openwebui }
 spec:
   endpointSelector: { matchLabels: { app: openwebui } }
+  egress:
+    - toEndpoints: [{ matchLabels: { "k8s:io.kubernetes.pod.namespace": kube-system, "k8s:k8s-app": kube-dns } }]
+      toPorts: [{ ports: [{ port: "53", protocol: ANY }], rules: { dns: [{ matchPattern: "*" }] } }]
+    - toEndpoints: [{ matchLabels: { "k8s:io.kubernetes.pod.namespace": launcher, app: launcher } }]
+      toPorts: [{ ports: [{ port: "8080", protocol: TCP }] }]
+    - toCIDR: [192.168.65.254/32] # local model (Ollama on the Mac)
+      toPorts: [{ ports: [{ port: "11434", protocol: TCP }] }]
+---
+# --- zeroclaw: the launcher and the model, nothing else. No ingress (port-forward only).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: default-deny, namespace: zeroclaw }
+spec: { podSelector: {}, policyTypes: [Ingress, Egress] }
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata: { name: zeroclaw, namespace: zeroclaw }
+spec:
+  endpointSelector: { matchLabels: { app: zeroclaw } }
   egress:
     - toEndpoints: [{ matchLabels: { "k8s:io.kubernetes.pod.namespace": kube-system, "k8s:k8s-app": kube-dns } }]
       toPorts: [{ ports: [{ port: "53", protocol: ANY }], rules: { dns: [{ matchPattern: "*" }] } }]
