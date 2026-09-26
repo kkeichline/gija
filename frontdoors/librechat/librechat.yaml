@@ -23,7 +23,7 @@ endpoints:
       apiKey: "ollama"
       baseURL: "http://host.docker.internal:11434/v1/"
       models:
-        default: ["qwen3-coder-64k"]
+        default: ["gpt-oss:20b", "qwen3-coder-64k"]
         fetch: false
       titleConvo: true
       titleModel: "current_model"
@@ -57,7 +57,7 @@ modelSpecs:
       mcpServers: [gija]
       preset:
         endpoint: "Local (Ollama)"
-        model: "qwen3-coder-64k"
+        model: "gpt-oss:20b"  # the chat model; the research agent uses its own
         greeting: "Hi! Ask me a question about member claim costs, and I'll run governed research on it."
         promptPrefix: &assistant |
           You are the front desk for gija, a governed research platform. You never touch data

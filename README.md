@@ -83,6 +83,11 @@ Point it back at the Anthropic API:
 make model-claude
 ```
 
+gija uses two models. The front doors use `gpt-oss:20b`, which calls tools reliably.
+The research agent uses `qwen3-coder-64k`, which writes the Python. Set the research
+model with `make model-local` or `make model-claude`. Set the chat model in each front
+door's configuration file.
+
 ## Ask a question
 
 The command line front door needs no account:

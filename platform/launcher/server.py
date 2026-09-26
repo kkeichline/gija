@@ -26,7 +26,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.requests import Request
-from starlette.responses import PlainTextResponse
+from starlette.responses import JSONResponse, PlainTextResponse
 from temporalio.client import Client, WorkflowExecutionStatus
 from temporalio.service import RPCError
 
@@ -169,10 +169,7 @@ mcp = MCPServer(
 )
 
 
-@mcp.tool()
-async def list_problems(ctx: Context) -> dict:
-    """List the research problems you can ask about, with their questions and what a result looks like."""
-    front_door, user = caller(ctx)
+async def do_list_problems(front_door: str, user: str) -> dict:
     authorize(front_door, user, "list_problems", {"uid": {"type": "Catalog", "id": "all"}, "attrs": {}, "parents": []})
     team = person(user)["attrs"]["team"]
     return {"you": user, "problems": [
@@ -182,10 +179,7 @@ async def list_problems(ctx: Context) -> dict:
         for p, c in CONTRACTS.items() if team in c["teams"]]}
 
 
-@mcp.tool()
-async def start_research(problem: str, question: str, ctx: Context) -> dict:
-    """Start a research run on a problem. Returns a research_id; it runs in the background."""
-    front_door, user = caller(ctx)
+async def do_start_research(front_door: str, user: str, problem: str, question: str) -> dict:
     if problem not in CONTRACTS:
         raise ToolError(f"unknown problem {problem!r}; call list_problems")
     if not 3 <= len(question) <= 2000:
@@ -208,10 +202,7 @@ async def start_research(problem: str, question: str, ctx: Context) -> dict:
             "next": "call research_status with this id in a few minutes"}
 
 
-@mcp.tool()
-async def research_status(research_id: str, ctx: Context) -> dict:
-    """Get a research run's progress and, once released, its result table."""
-    front_door, user = caller(ctx)
+async def do_research_status(front_door: str, user: str, research_id: str) -> dict:
     handle, desc, req = await load(research_id)
     authorize(front_door, user, "research_status", research_entity(research_id, req))
     if desc.status == WorkflowExecutionStatus.RUNNING:
@@ -245,10 +236,7 @@ async def research_status(research_id: str, ctx: Context) -> dict:
     return out
 
 
-@mcp.tool()
-async def decide(research_id: str, decision: str, ctx: Context) -> dict:
-    """Approve or reject promoting a research run's UDF. decision is 'approve' or 'reject'. Approvers only."""
-    front_door, user = caller(ctx)
+async def do_decide(front_door: str, user: str, research_id: str, decision: str) -> dict:
     if decision not in ("approve", "reject"):
         raise ToolError("decision must be 'approve' or 'reject'")
     handle, desc, req = await load(research_id)
@@ -259,6 +247,142 @@ async def decide(research_id: str, decision: str, ctx: Context) -> dict:
     await handle.signal(ResearchRun.decide, args=[decision, user])
     audit(event="research_decided", research_id=research_id, user=user, decision=decision)
     return {"research_id": research_id, "decision": decision, "by": user}
+
+
+# --- MCP tools (LibreChat, ZeroClaw, OpenClaw, the command line) -------------------------
+
+@mcp.tool()
+async def list_problems(ctx: Context) -> dict:
+    """List the research problems you can ask about, with their questions and what a result looks like."""
+    return await do_list_problems(*caller(ctx))
+
+
+@mcp.tool()
+async def start_research(problem: str, question: str, ctx: Context) -> dict:
+    """Start a research run on a problem. Returns a research_id; it runs in the background."""
+    front_door, user = caller(ctx)
+    return await do_start_research(front_door, user, problem, question)
+
+
+@mcp.tool()
+async def research_status(research_id: str, ctx: Context) -> dict:
+    """Get a research run's progress and, once released, its result table."""
+    front_door, user = caller(ctx)
+    return await do_research_status(front_door, user, research_id)
+
+
+@mcp.tool()
+async def decide(research_id: str, decision: str, ctx: Context) -> dict:
+    """Approve or reject promoting a research run's UDF. decision is 'approve' or 'reject'. Approvers only."""
+    front_door, user = caller(ctx)
+    return await do_decide(front_door, user, research_id, decision)
+
+
+# --- the same four operations over plain HTTP (Open WebUI, scripts, any client) ----------
+#
+# Open WebUI calls OpenAPI tool servers from its own backend, which is its documented
+# path. Authentication, identity, and Cedar checks are identical to the MCP tools; only
+# the transport differs.
+
+def http_caller(request: Request) -> tuple[str, str]:
+    headers = request.headers
+    front_door = FRONT_DOORS.get(headers.get("authorization", "").removeprefix("Bearer ").strip())
+    if front_door is None:
+        audit(event="authn", decision="DENY", reason="unknown front-door token", transport="http")
+        raise PermissionError("unauthenticated")
+    raw = headers.get("x-user") or headers.get("x-openwebui-user-email") or ""
+    user = re.sub(r"[^\w.@+-]", "", raw.strip().lower())[:128]
+    return front_door, user or f"{front_door}:anonymous"
+
+
+def http_route(handler):
+    """Turn a handler into a JSON route: authenticate, run, and map errors to status codes."""
+    async def route(request: Request) -> JSONResponse:
+        try:
+            front_door, user = http_caller(request)
+        except PermissionError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=401)
+        try:
+            body = await request.json() if request.method == "POST" and await request.body() else {}
+        except json.JSONDecodeError:
+            return JSONResponse({"error": "body must be JSON"}, status_code=400)
+        try:
+            return JSONResponse(await handler(front_door, user, request, body))
+        except ToolError as exc:
+            status = 403 if str(exc).startswith("DENIED") else 400
+            return JSONResponse({"error": str(exc)}, status_code=status)
+    return route
+
+
+@mcp.custom_route("/api/problems", methods=["GET"])
+@http_route
+async def http_problems(front_door: str, user: str, request: Request, body: dict) -> dict:
+    return await do_list_problems(front_door, user)
+
+
+@mcp.custom_route("/api/research", methods=["POST"])
+@http_route
+async def http_start_research(front_door: str, user: str, request: Request, body: dict) -> dict:
+    return await do_start_research(front_door, user, str(body.get("problem", "")), str(body.get("question", "")))
+
+
+@mcp.custom_route("/api/research/{research_id}", methods=["GET"])
+@http_route
+async def http_research_status(front_door: str, user: str, request: Request, body: dict) -> dict:
+    return await do_research_status(front_door, user, request.path_params["research_id"])
+
+
+@mcp.custom_route("/api/research/{research_id}/decision", methods=["POST"])
+@http_route
+async def http_decide(front_door: str, user: str, request: Request, body: dict) -> dict:
+    return await do_decide(front_door, user, request.path_params["research_id"], str(body.get("decision", "")))
+
+
+RESEARCH_ID_PARAM = {"name": "research_id", "in": "path", "required": True,
+                     "description": "The id returned by start_research.",
+                     "schema": {"type": "string"}}
+JSON_OK = {"200": {"description": "Result", "content": {"application/json": {"schema": {"type": "object"}}}}}
+
+OPENAPI = {
+    "openapi": "3.1.0",
+    "info": {"title": "gija research", "version": "1.0.0",
+             "description": "Ask governed research questions. Runs happen in the background."},
+    "paths": {
+        "/api/problems": {"get": {
+            "operationId": "list_problems", "summary": "List the research problems you can ask about",
+            "description": "Returns each problem, its question, the columns a result has, and its privacy rule.",
+            "responses": JSON_OK}},
+        "/api/research": {"post": {
+            "operationId": "start_research", "summary": "Start a research run",
+            "description": "Starts a run in the background and returns a research_id. A run takes several minutes.",
+            "requestBody": {"required": True, "content": {"application/json": {"schema": {
+                "type": "object", "required": ["problem", "question"],
+                "properties": {
+                    "problem": {"type": "string", "description": "A problem name from list_problems."},
+                    "question": {"type": "string", "description": "The question to answer, 3 to 2000 characters."},
+                }}}}},
+            "responses": JSON_OK}},
+        "/api/research/{research_id}": {"get": {
+            "operationId": "research_status", "summary": "Get a research run's progress and result",
+            "description": "Returns the stage, progress, any reasons a person is needed, and the released table.",
+            "parameters": [RESEARCH_ID_PARAM], "responses": JSON_OK}},
+        "/api/research/{research_id}/decision": {"post": {
+            "operationId": "decide", "summary": "Approve or reject promoting a run's code",
+            "description": "Approvers only. Nobody can decide their own request.",
+            "parameters": [RESEARCH_ID_PARAM],
+            "requestBody": {"required": True, "content": {"application/json": {"schema": {
+                "type": "object", "required": ["decision"],
+                "properties": {"decision": {"type": "string", "enum": ["approve", "reject"]}}}}}},
+            "responses": JSON_OK}},
+    },
+}
+
+
+@mcp.custom_route("/openapi.json", methods=["GET"])
+async def openapi(request: Request) -> JSONResponse:
+    """The description Open WebUI and other HTTP clients read. Servers is set from the request."""
+    base = str(request.base_url).rstrip("/")
+    return JSONResponse({**OPENAPI, "servers": [{"url": base}]})
 
 
 @mcp.custom_route("/healthz", methods=["GET"])

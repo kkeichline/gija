@@ -58,6 +58,7 @@ ollama: ## Install Ollama on this Mac and build the local model (one-time, ~19 G
 	@brew services list | grep -qE '^ollama +started' || brew services start ollama
 	ollama pull qwen3-coder:30b
 	ollama create qwen3-coder-64k -f ollama/Modelfile
+	ollama pull gpt-oss:20b
 
 model-local: ## Use the local Ollama model for the Coordinator and Claude Code (no API spend)
 	@scripts/model.sh local

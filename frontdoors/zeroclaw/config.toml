@@ -7,7 +7,7 @@
 schema_version = 3
 
 [providers.models.ollama.host]
-model = "qwen3-coder-64k"
+model = "gpt-oss:20b" # chat model, chosen for tool calling; the research agent uses its own
 uri = "http://host.docker.internal:11434" # Ollama runs on the Mac, for the GPU
 
 [agents.assistant]

@@ -158,3 +158,55 @@ async def test_an_unusable_review_fails_closed():
 async def test_overnight_budget_allows_many_sessions():
     state, approvals = await run_workflow(["rejected"] * 5 + ["released"], mode="auto_if_clean", max_sessions=8)
     assert len(state.sessions) == 6 and approvals
+
+
+# --- the OpenAPI description must match the code it describes -----------------------
+
+def documented_operations():
+    return {(path, method.lower()): op
+            for path, methods in server.OPENAPI["paths"].items()
+            for method, op in methods.items()}
+
+
+def http_routes():
+    """Every /api route the launcher actually serves, as (path, method)."""
+    routes = {}
+    for route in server.app.routes:
+        path, methods = getattr(route, "path", ""), getattr(route, "methods", set()) or set()
+        if path.startswith("/api/"):
+            for method in methods - {"HEAD", "OPTIONS"}:
+                routes[(path, method.lower())] = route
+    return routes
+
+
+def test_every_http_route_is_documented():
+    assert set(http_routes()) == set(documented_operations())
+
+
+async def test_operation_ids_match_the_mcp_tool_names():
+    tools = {t.name for t in await server.mcp.list_tools()}
+    assert {op["operationId"] for op in documented_operations().values()} == tools
+    assert tools == {"list_problems", "start_research", "research_status", "decide"}
+
+
+def test_documented_bodies_match_the_implementations():
+    """A documented request body names exactly the implementation's own arguments."""
+    import inspect
+    implementations = {"start_research": server.do_start_research, "decide": server.do_decide}
+    for op in documented_operations().values():
+        body = op.get("requestBody")
+        if not body:
+            continue
+        schema = body["content"]["application/json"]["schema"]
+        taken = set(inspect.signature(implementations[op["operationId"]]).parameters) - {"front_door", "user"}
+        documented = set(schema["properties"])
+        path_params = {p["name"] for p in op.get("parameters", [])}
+        assert documented | path_params == taken, op["operationId"]
+        assert set(schema["required"]) == documented
+
+
+def test_every_operation_is_described_for_a_reader():
+    for (path, method), op in documented_operations().items():
+        assert op.get("summary"), f"{method} {path} has no summary"
+        assert op.get("description"), f"{method} {path} has no description"
+        assert "200" in op["responses"]

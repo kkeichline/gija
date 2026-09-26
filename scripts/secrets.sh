@@ -57,16 +57,18 @@ printf 'CREDS_KEY=%s\nCREDS_IV=%s\nJWT_SECRET=%s\nJWT_REFRESH_SECRET=%s\nGIJA_FR
 
 # Open WebUI: session key, and its gija tool server preconfigured (no admin clicking).
 owui_secret="$(existing openwebui openwebui-secrets WEBUI_SECRET_KEY)"; owui_secret="${owui_secret:-$(fresh)}"
+# Open WebUI calls OpenAPI tool servers from its own backend and forwards the signed-in
+# user. That is its documented path; the launcher serves the same four operations there.
 tool_servers="$(python3 -c '
 import json, sys
 print(json.dumps([{
     "url": "http://launcher.launcher.svc.cluster.local:8080",
-    "path": "http://launcher.launcher.svc.cluster.local:8080/mcp",
-    "type": "mcp",
+    "path": "openapi.json",
+    "type": "openapi",
     "auth_type": "bearer",
     "key": sys.argv[1],
     "config": {"enable": True},
-    "info": {"name": "gija", "description": "Governed research: ask, follow, approve."},
+    "info": {"id": "gija", "name": "gija", "description": "Governed research: ask, follow, approve."},
 }]))' "$(door_token openwebui)")"
 printf 'WEBUI_SECRET_KEY=%s\nTOOL_SERVER_CONNECTIONS=%s\n' "$owui_secret" "$tool_servers" | apply openwebui openwebui-secrets
 
